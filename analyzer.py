@@ -165,3 +165,197 @@ def extract_wa_ac_pairs(
             ))
 
     return pairs
+
+
+# ── M2-2: 启发式复盘摘要（纯规则引擎，零外部 API 依赖）─────────────────────────
+#
+# 所有规则签名统一为 (overview, timeline, pairs, contest_start) -> str | None。
+# contest_start=0 时回退到"首提交时间"锚点（向后兼容）；
+# 传入真实比赛开始时间（calculate_contest_start）可获得准确罚时/速度计算。
+
+
+def _group_by_problem(timeline: list[TimelineEntry]) -> dict[str, list[TimelineEntry]]:
+    """按 problem_index 分组时间线条目（纯函数）"""
+    groups: dict[str, list[TimelineEntry]] = {}
+    for e in timeline:
+        groups.setdefault(e.problem_index, []).append(e)
+    return groups
+
+
+def _heaviest_penalty(
+    overview: ContestOverview,
+    timeline: list[TimelineEntry],
+    pairs: list[ProblemCodePair],
+    contest_start: int = 0,
+) -> str | None:
+    """找出罚时占比最大的 WA 过的题目（CF 罚时 = AC 距开赛时间 + WA 次数 × 10min）"""
+    if not pairs:
+        return None
+    total_penalty_seconds = 0
+    per_problem: list[tuple[str, int, int]] = []  # (label, penalty_seconds, wa_count)
+    for idx, entries in _group_by_problem(timeline).items():
+        ac = next((e for e in entries if e.verdict == "OK"), None)
+        if ac is None:
+            continue
+        wa_count = sum(
+            1 for e in entries
+            if e.verdict == "WRONG_ANSWER" and e.creation_time < ac.creation_time
+        )
+        # 锚点：优先用比赛开始时间；缺失时退回该题首次提交时间
+        anchor = contest_start if contest_start > 0 else entries[0].creation_time
+        penalty_seconds = (ac.creation_time - anchor) + wa_count * 600
+        total_penalty_seconds += penalty_seconds
+        if wa_count > 0:
+            per_problem.append((idx, penalty_seconds, wa_count))
+    if total_penalty_seconds == 0 or not per_problem:
+        return None
+    heaviest = max(per_problem, key=lambda x: x[1])
+    idx, penalty_s, wa_c = heaviest
+    # 秒级累加后一次除法，避免先取整的精度损失
+    pct = penalty_s / total_penalty_seconds * 100
+    return f"🏅 最重罚时题：{idx} 题 {wa_c} 次 WA，罚时约 {penalty_s // 60}min，占总罚时 {pct:.0f}%"
+
+
+def _speed_tier(
+    overview: ContestOverview,
+    timeline: list[TimelineEntry],
+    pairs: list[ProblemCodePair],
+    contest_start: int = 0,
+) -> str | None:
+    """前 30min 内 AC 的题数统计（锚点：比赛开始时间，缺失时退回首提交）"""
+    if not timeline:
+        return None
+    anchor = contest_start if contest_start > 0 else timeline[0].creation_time
+    ac_labels: list[str] = []
+    seen: set[str] = set()
+    for e in timeline:
+        if e.verdict == "OK" and e.problem_index not in seen:
+            if e.creation_time - anchor <= 1800:  # 30min
+                seen.add(e.problem_index)
+                ac_labels.append(e.problem_index)
+    if not ac_labels:
+        return None
+    labels_str = "、".join(ac_labels)
+    return f"⚡ 速度档位：前 30min 内 AC {len(ac_labels)} 题（{labels_str}），开局状态火热"
+
+
+def _wa_density(
+    overview: ContestOverview,
+    timeline: list[TimelineEntry],
+    pairs: list[ProblemCodePair],
+    contest_start: int = 0,
+) -> str | None:
+    """WA 次数 ≥ 3 的所有题目 → 警告"""
+    if not timeline:
+        return None
+    heavy: list[str] = []
+    for idx, entries in _group_by_problem(timeline).items():
+        wa_count = sum(1 for e in entries if e.verdict == "WRONG_ANSWER")
+        if wa_count >= 3:
+            heavy.append(f"{idx} 题 {wa_count} 次 WA")
+    if not heavy:
+        return None
+    return f"⚠️ WA 密度：{'、'.join(heavy)}，建议赛后重点复盘"
+
+
+def _one_shot_ac_praise(
+    overview: ContestOverview,
+    timeline: list[TimelineEntry],
+    pairs: list[ProblemCodePair],
+    contest_start: int = 0,
+) -> str | None:
+    """只有 1 条提交且 AC 的题目 → 表扬（一发 AC，非 CF 全场一血含义）"""
+    if not timeline:
+        return None
+    clean: list[str] = []
+    for idx, entries in _group_by_problem(timeline).items():
+        if len(entries) == 1 and entries[0].verdict == "OK":
+            clean.append(idx)
+    if not clean:
+        return None
+    labels_str = "、".join(clean)
+    return f"✨ 一次通过：{labels_str} 题一发 AC，干净利落"
+
+
+def _unsolved_warning(
+    overview: ContestOverview,
+    timeline: list[TimelineEntry],
+    pairs: list[ProblemCodePair],
+    contest_start: int = 0,
+) -> str | None:
+    """有提交但零 AC 的题目 → 警告"""
+    if not timeline:
+        return None
+    unsolved: list[str] = []
+    for idx, entries in _group_by_problem(timeline).items():
+        if not any(e.verdict == "OK" for e in entries):
+            unsolved.append(f"{idx}({len(entries)}次)")
+    if not unsolved:
+        return None
+    labels_str = "、".join(unsolved)
+    return f"🚫 未 AC 警告：{labels_str} 有提交但未通过，建议对照题解复查"
+
+
+def _efficiency_trend(
+    overview: ContestOverview,
+    timeline: list[TimelineEntry],
+    pairs: list[ProblemCodePair],
+    contest_start: int = 0,
+) -> str | None:
+    """按 AC 顺序计算相邻 AC 时间间隔，判断放缓趋势"""
+    if not timeline:
+        return None
+    ac_times: list[tuple[str, int]] = []
+    seen: set[str] = set()
+    for e in timeline:
+        if e.verdict == "OK" and e.problem_index not in seen:
+            seen.add(e.problem_index)
+            ac_times.append((e.problem_index, e.creation_time))
+    if len(ac_times) < 3:  # 至少 3 道 AC 才有前后半段可比
+        return None
+    gaps = [
+        (ac_times[i][1] - ac_times[i - 1][1]) // 60
+        for i in range(1, len(ac_times))
+    ]
+    first_half_avg = sum(gaps[:len(gaps) // 2]) / (len(gaps) // 2)
+    second_half_avg = sum(gaps[len(gaps) // 2:]) / (len(gaps) - len(gaps) // 2)
+    # 最小间隔阈值：前半段平均 < 1min 时（间隔取整为 0），不足以判断趋势
+    if first_half_avg < 1:
+        return None
+    if second_half_avg > first_half_avg * 1.5:
+        details = "、".join(
+            f"{ac_times[i - 1][0]}→{ac_times[i][0]} {g}min"
+            for i, g in enumerate(gaps, 1) if g > 0
+        )
+        return (
+            f"📈 效率趋势：后期解题速度放缓（{details}），"
+            f"后半段平均间隔 {second_half_avg:.0f}min > 前半段 {first_half_avg:.0f}min"
+        )
+    return None
+
+
+def generate_insights(
+    overview: ContestOverview,
+    timeline: list[TimelineEntry],
+    pairs: list[ProblemCodePair],
+    contest_start: int = 0,
+) -> list[str]:
+    """生成多条中文比赛洞察（纯规则引擎，不调 API）
+
+    contest_start 建议传入 calculate_contest_start(standings)；
+    为 0 时罚时/速度锚点退回首提交时间（向后兼容）。
+    """
+    rules = [
+        _heaviest_penalty,
+        _speed_tier,
+        _wa_density,
+        _one_shot_ac_praise,
+        _unsolved_warning,
+        _efficiency_trend,
+    ]
+    results: list[str] = []
+    for rule in rules:
+        insight = rule(overview, timeline, pairs, contest_start)
+        if insight is not None:
+            results.append(insight)
+    return results

@@ -396,12 +396,36 @@ def fetch_recent_contests(handle: str, count: int = 10) -> list[dict[str, Any]]:
 
 **测试：** 6 个新测试（tests/test_fetcher.py）
 
+### M2-2: 启发式复盘摘要 ✅
+
+**状态：** 已完成
+
+**新增函数（analyzer.py，全部纯函数）：**
+```python
+def generate_insights(overview, timeline, pairs, contest_start: int = 0) -> list[str]:
+    """调六个规则函数，过滤 None，返回中文洞察列表"""
+```
+六个规则（统一签名 `(overview, timeline, pairs, contest_start) -> str | None`）：
+- `_heaviest_penalty` — 罚时占比最大的 WA 题（CF 罚时 = AC 距开赛 + WA×10min）
+- `_speed_tier` — 前 30min 内 AC 题数
+- `_wa_density` — WA ≥ 3 次的所有题目警告
+- `_one_shot_ac_praise` — 一发 AC 表扬
+- `_unsolved_warning` — 有提交无 AC 警告
+- `_efficiency_trend` — 相邻 AC 间隔放缓检测（≥3 AC 才触发）
+
+**关键设计：** `contest_start=0` 时锚点退回首提交时间（向后兼容）；app.py 接线时传 `calculate_contest_start(standings)` 获得准确罚时。
+
+**测试：** 11 个测试（tests/test_insights.py），含锚点回归测试
+
 ### M2 Backlog
 
-- [ ] M2-2: 启发式复盘摘要 — `analyzer.py` 纯函数生成 4-6 条中文洞察
 - [ ] M2-3: 弱点识别 — 多场比赛交叉分析（按 tags / rating bands）
-- [ ] M2-4: AtCoder 支持
-- [ ] M2-5: 分享链接功能
+- [ ] M2-4: AtCoder 支持（推迟到 M3）
+- [ ] M2-5: 分享链接功能（推迟到 M3）
+- [ ] app.py 接线 generate_insights（新增"洞察"区域，传入 contest_start）
+- [ ] I4: fetch_user_submissions 过滤 participantType == "CONTESTANT"（赛后补题污染洞察）
+- [ ] M11: 规则函数复用 TimelineEntry.solved 字段，消除重复 verdict == "OK" 判断
+- [ ] build_problem_timeline(submissions, problems) — 按题目分组的时间线（M1 遗留）
 
 ### 全局约束（适用于所有 Task）
 
