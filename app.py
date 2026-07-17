@@ -287,22 +287,43 @@ def _render_weakness(handle: str) -> None:
     else:
         st.caption("提交数据中没有 tag 信息。")
 
-    # ── 下半部分：Rating 段分析（AC 率升序）──
-    st.subheader("📶 Rating 段分析")
-    band_rows = [
-        {
-            "Rating 段": band,
-            "提交数": s["total"],
-            "AC 率": s["ac_rate"],
-            "平均耗时 (min)": _fmt_avg_time(s),
-        }
-        for band, s in band_stats.items()
-        if s["total"] > 0
-    ]
-    if band_rows:
-        _weakness_table(band_rows, ac_rate_col)
-    else:
+    # ── 下半部分：Tag × Rating 段交叉分析（AC 率热力图）──
+    st.subheader("📶 Tag × Rating 段分析")
+    # 收集所有有数据的 band 和所有 tag
+    active_bands = [(b, s) for b, s in band_stats.items() if s["total"] > 0]
+    if not active_bands:
         st.caption("提交数据中没有题目 rating 信息。")
+        return
+
+    # 收集所有 tag（按字典序）
+    all_tags: set[str] = set()
+    for _, s in active_bands:
+        all_tags.update(s.get("tags", {}).keys())
+    all_tags_sorted = sorted(all_tags)
+
+    # 构建表格行：[tag, band1_ac_rate, band2_ac_rate, ...]
+    cross_rows: list[dict[str, object]] = []
+    for tag in all_tags_sorted:
+        row: dict[str, object] = {"Tag": tag}
+        for band_name, s in active_bands:
+            rates = s.get("tags", {})
+            row[band_name] = rates.get(tag, None)
+        cross_rows.append(row)
+
+    # 为每个 band 列创建 ProgressColumn
+    col_config: dict[str, object] = {
+        "Tag": st.column_config.TextColumn("Tag"),
+    }
+    for band_name, _ in active_bands:
+        col_config[band_name] = st.column_config.ProgressColumn(
+            band_name,
+            format="percent",
+            min_value=0.0,
+            max_value=1.0,
+        )
+
+    df = pd.DataFrame(cross_rows)
+    st.dataframe(df, column_config=col_config, width="stretch", hide_index=True)
 
 
 def main() -> None:

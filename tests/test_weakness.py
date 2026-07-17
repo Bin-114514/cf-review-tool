@@ -229,38 +229,40 @@ def test_tag_analysis_excludes_practice():
 
 
 def test_rating_band_analysis():
-    """按 rating 分段（<1400, 1400-1600, 1600-1900, 1900+）统计 AC 率和平均时间"""
+    """按 100-rating 分桶统计 AC 率和平均时间"""
     submissions = [
-        # <1400: 2 AC
         _make_analysis_submission(1, "A", ["math"], 1200, "OK", 300),
         _make_analysis_submission(2, "A", ["math"], 1300, "OK", 500),
-        # 1400-1600: 1 AC + 1 WA
         _make_analysis_submission(3, "B", ["dp"], 1500, "OK", 1000),
         _make_analysis_submission(4, "B", ["dp"], 1400, "WRONG_ANSWER", 800),
-        # 1600-1900: 1 WA
         _make_analysis_submission(5, "C", ["graphs"], 1700, "WRONG_ANSWER", 2000),
-        # 1900+: 1 AC
         _make_analysis_submission(6, "D", ["dp"], 2100, "OK", 3000),
     ]
 
     result = analyze_rating_bands(submissions)
 
-    assert result["<1400"]["total"] == 2
-    assert result["<1400"]["ac"] == 2
-    assert result["<1400"]["ac_rate"] == pytest.approx(1.0)
-    assert result["<1400"]["avg_time"] == pytest.approx(400)  # (300+500)/2
+    assert result["1200-1300"]["total"] == 1
+    assert result["1200-1300"]["ac"] == 1
+    assert result["1200-1300"]["ac_rate"] == pytest.approx(1.0)
+    assert result["1200-1300"]["avg_time"] == pytest.approx(300)
 
-    assert result["1400-1600"]["total"] == 2
-    assert result["1400-1600"]["ac"] == 1
-    assert result["1400-1600"]["wa"] == 1
-    assert result["1400-1600"]["ac_rate"] == pytest.approx(0.5)
+    assert result["1300-1400"]["total"] == 1
+    assert result["1300-1400"]["ac"] == 1
+    assert result["1300-1400"]["avg_time"] == pytest.approx(500)
 
-    assert result["1600-1900"]["total"] == 1
-    assert result["1600-1900"]["ac"] == 0
-    assert result["1600-1900"]["ac_rate"] == pytest.approx(0.0)
+    assert result["1400-1500"]["total"] == 1
+    assert result["1400-1500"]["ac"] == 0
+    assert result["1400-1500"]["wa"] == 1
+    assert result["1400-1500"]["ac_rate"] == pytest.approx(0.0)
 
-    assert result["1900+"]["total"] == 1
-    assert result["1900+"]["ac"] == 1
+    assert result["1500-1600"]["total"] == 1
+    assert result["1500-1600"]["ac"] == 1
+
+    assert result["1700-1800"]["total"] == 1
+    assert result["1700-1800"]["ac"] == 0
+
+    assert result["2100-2200"]["total"] == 1
+    assert result["2100-2200"]["ac"] == 1
 
 
 def test_rating_band_skips_unrated_problems():
@@ -274,6 +276,83 @@ def test_rating_band_skips_unrated_problems():
 
     total_across_bands = sum(band["total"] for band in result.values())
     assert total_across_bands == 1  # 只有 rated 的那条
+
+
+def test_100_band_granularity():
+    """1700-1800 段有 5 题，1800-1900 段有 3 题
+
+    边界验证：
+    - 1749 落 1700-1800（左闭右开）
+    - 1800 落 1800-1900（1800 是下一个桶的下界）
+    """
+    submissions = [
+        # 1700-1800: 5 题（rating 1700, 1720, 1749, 1755, 1799）
+        _make_analysis_submission(1, "A", tags=["math"],  rating=1700, verdict="OK"),
+        _make_analysis_submission(2, "B", tags=["dp"],    rating=1720, verdict="OK"),
+        _make_analysis_submission(3, "C", tags=["dp"],    rating=1749, verdict="WRONG_ANSWER"),
+        _make_analysis_submission(4, "D", tags=["greedy"],rating=1755, verdict="OK"),
+        _make_analysis_submission(5, "E", tags=["dp"],    rating=1799, verdict="OK"),
+        # 1800-1900: 3 题（1800 不在 1700-1800，是下一桶下界）
+        _make_analysis_submission(6, "F", tags=["graphs"],rating=1800, verdict="OK"),
+        _make_analysis_submission(7, "G", tags=["math"],  rating=1825, verdict="WRONG_ANSWER"),
+        _make_analysis_submission(8, "H", tags=["dp"],    rating=1899, verdict="OK"),
+    ]
+
+    result = analyze_rating_bands(submissions)
+
+    assert "1700-1800" in result, f"Expected 1700-1800 band, got keys: {list(result.keys())}"
+    assert "1800-1900" in result, f"Expected 1800-1900 band, got keys: {list(result.keys())}"
+
+    # 1700-1800: total=5, ac=4, wa=1
+    b1 = result["1700-1800"]
+    assert b1["total"] == 5, f"1700-1800 total=5, got {b1['total']}"
+    assert b1["ac"] == 4
+    assert b1["wa"] == 1
+    assert b1["ac_rate"] == pytest.approx(0.8)
+
+    # 1800-1900: total=3, ac=2, wa=1
+    b2 = result["1800-1900"]
+    assert b2["total"] == 3
+    assert b2["ac"] == 2
+    assert b2["wa"] == 1
+    assert b2["ac_rate"] == pytest.approx(2 / 3)
+
+
+def test_empty_bands():
+    """中间有空桶（如 2000-2100 无数据）→ 不抛错，空桶不影响其他桶统计"""
+    submissions = [
+        _make_analysis_submission(1, "A", tags=["math"],  rating=1400, verdict="OK"),
+        _make_analysis_submission(2, "B", tags=["dp"],    rating=2500, verdict="OK"),
+    ]
+
+    result = analyze_rating_bands(submissions)
+
+    # 空桶不应抛错
+    assert "1400-1500" in result, f"Expected 1400-1500 band, got keys: {list(result.keys())}"
+    assert "2500-2600" in result, f"Expected 2500-2600 band, got keys: {list(result.keys())}"
+    # 空桶索引存在但 total=0
+    assert result["1400-1500"]["total"] == 1
+    assert result["2500-2600"]["total"] == 1
+
+
+def test_tag_breakdown():
+    """1700-1800 段里 3 道 dp 1 道 math → top tags 是 dp (3) 然后 math (1)"""
+    submissions = [
+        _make_analysis_submission(1, "A", tags=["dp"],    rating=1750, verdict="OK"),
+        _make_analysis_submission(2, "B", tags=["dp"],    rating=1700, verdict="OK"),
+        _make_analysis_submission(3, "C", tags=["dp"],    rating=1799, verdict="WRONG_ANSWER"),
+        _make_analysis_submission(4, "D", tags=["math"],  rating=1730, verdict="OK"),
+    ]
+
+    result = analyze_rating_bands(submissions)
+
+    b = result["1700-1800"]
+    assert "top_tags" in b, f"Missing top_tags in bucket: {b}"
+    top = b["top_tags"]
+    # dp 出现 3 次，math 出现 1 次
+    assert len(top) == 2, f"Expected 2 distinct tags, got {len(top)}: {top}"
+    assert top[0] == ("dp", 3), f"Expected dp(3) first, got {top[0]}"
+    assert top[1] == ("math", 1), f"Expected math(1) second, got {top[1]}"
 
 
 def test_analysis_empty_submissions():

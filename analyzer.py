@@ -466,25 +466,37 @@ def analyze_tags(
     return stats
 
 
-# rating 分段边界：左闭右开，[下界, 上界)
+# 100-rating 分桶：800 到 3500，每 100 一个桶（左闭右开）
+# 两端 catch-all: <800 和 3500+
 _RATING_BANDS: list[tuple[str, int, int]] = [
-    ("<1400", 0, 1400),
-    ("1400-1600", 1400, 1600),
-    ("1600-1900", 1600, 1900),
-    ("1900+", 1900, 10**9),
+    ("<800", 0, 800),
 ]
+for lo in range(800, 3500, 100):
+    label = f"{lo}-{lo + 100}"
+    _RATING_BANDS.append((label, lo, lo + 100))
+_RATING_BANDS.append(("3500+", 3500, 10**9))
 
 
 def analyze_rating_bands(
     submissions: list[dict[str, Any]],
 ) -> dict[str, dict[str, Any]]:
-    """按题目 rating 分段统计提交表现（纯函数）
+    """按 tag × 100-rating 分桶统计提交表现（纯函数）
 
-    分段：<1400, 1400-1600, 1600-1900, 1900+（左闭右开）。
-    无 rating 的题目跳过。返回 {band: {total, ac, wa, ac_rate, avg_time}}。
+    桶范围：<800, 800-900, ..., 3400-3500, 3500+（左闭右开）。
+    返回 {band_label: {tag: ac_rate, total, ac, wa, ac_rate_total, avg_time, top_tags}}。
+    ac_rate_total 是该段整体 AC 率（不分 tag）。
+    top_tags 是该段出现最多的前 3 个 tag。
+    无 rating 的题目跳过。
     """
-    stats: dict[str, dict[str, Any]] = {name: _blank_stats() for name, _, _ in _RATING_BANDS}
+    # 先统计每个 band 的 tag 维度 AC 率
+    band_tags: dict[str, dict[str, list[bool]]] = {}
+    # 再统计每个 band 的整体统计（兼容旧字段）
+    stats: dict[str, dict[str, Any]] = {
+        name: {**_blank_stats(), "top_tags": []}
+        for name, _, _ in _RATING_BANDS
+    }
     ac_times: dict[str, list[int]] = {name: [] for name, _, _ in _RATING_BANDS}
+
     for s in submissions:
         if not _is_contestant(s):
             continue
@@ -497,6 +509,8 @@ def analyze_rating_bands(
         )
         if band is None:
             continue
+
+        # 整体统计
         verdict = s.get("verdict", "UNKNOWN")
         bucket = stats[band]
         bucket["total"] += 1
@@ -505,9 +519,48 @@ def analyze_rating_bands(
             ac_times[band].append(s.get("relativeTimeSeconds", 0))
         elif verdict == "WRONG_ANSWER":
             bucket["wa"] += 1
+
+        # tag × band 统计
+        tags = s.get("problem", {}).get("tags", [])
+        for tag in tags:
+            cell = band_tags.setdefault(band, {})
+            tag_list = cell.setdefault(tag, [])
+            tag_list.append(verdict == "OK")
+
     for band, bucket in stats.items():
         _finalize_stats(bucket, ac_times[band])
+        lo = next(lo for name, lo, _ in _RATING_BANDS if name == band)
+        hi = next(hi for name, _, hi in _RATING_BANDS if name == band)
+        bucket["top_tags"] = _band_top_tags(submissions, band, lo, hi)
+
+    # 注入 tag ac_rate: {tag: ac_rate}
+    for band, tag_data in band_tags.items():
+        tag_rates: dict[str, float] = {}
+        for tag, results in tag_data.items():
+            tag_rates[tag] = sum(results) / len(results) if results else 0.0
+        stats[band]["tags"] = tag_rates
+
     return stats
+
+
+def _band_top_tags(
+    submissions: list[dict[str, Any]],
+    band_name: str,
+    lo: int,
+    hi: int,
+) -> list[tuple[str, int]]:
+    """统计某 rating 段内各 tag 的出现次数，返回最多 3 个（纯函数）"""
+    tag_counts: dict[str, int] = {}
+    for s in submissions:
+        if not _is_contestant(s):
+            continue
+        rating = s.get("problem", {}).get("rating")
+        if rating is None or not (lo <= rating < hi):
+            continue
+        for tag in s.get("problem", {}).get("tags", []):
+            tag_counts[tag] = tag_counts.get(tag, 0) + 1
+    sorted_tags = sorted(tag_counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    return sorted_tags[:3]
 
 
 def count_contestant_contests(submissions: list[dict[str, Any]]) -> int:
