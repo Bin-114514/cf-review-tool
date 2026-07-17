@@ -4,3 +4,11 @@ primaryColor = "#28A745"
 backgroundColor = "#1E1E2E"
 secondaryBackgroundColor = "#2D2D3F"
 textColor = "#F8F9FA"
+
+[client]
+# 生产加固：未捕获异常不向访客渲染 traceback（内部路径/代码行）
+showErrorDetails = "none"
+
+[browser]
+# 关闭 Streamlit 使用统计上报
+gatherUsageStats = false

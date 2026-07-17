@@ -1,7 +1,7 @@
 """Tests for M2-3 weakness-analysis data layer — paginated fetch + tag extraction."""
 
 import pytest
-from fetcher import CFAPIError, fetch_problem_tags, fetch_recent_submissions
+from fetcher import CFAPIError, fetch_recent_submissions
 
 # ── helpers ─────────────────────────────────────────────────────────────────
 
@@ -108,68 +108,6 @@ def test_paginated_fetch_handles_api_error(mocker):
         fetch_recent_submissions(handle="tourist", count=500)
 
 
-# ── tests: fetch_problem_tags（题目 tags 映射）──────────────────────────────
-
-
-def test_fetch_problem_tags(mocker):
-    """从 contest.standings 提取 {index: [tags]} 映射"""
-    response = {
-        "status": "OK",
-        "result": {
-            "contest": {"id": 1, "name": "CF Round #1"},
-            "problems": [
-                {"contestId": 1, "index": "A", "name": "Theatre Square",
-                 "rating": 1000, "tags": ["math"]},
-                {"contestId": 1, "index": "B", "name": "Spreadsheet",
-                 "rating": 1600, "tags": ["implementation", "math"]},
-                {"contestId": 1, "index": "C", "name": "Graph",
-                 "rating": 1900, "tags": ["dfs and similar", "graphs"]},
-            ],
-            "rows": [],
-        },
-    }
-    mock = mocker.patch("fetcher.cf_api_get", return_value=response)
-    mocker.patch("fetcher.time.sleep")
-
-    result = fetch_problem_tags(contest_id=1)
-
-    assert result == {
-        "A": ["math"],
-        "B": ["implementation", "math"],
-        "C": ["dfs and similar", "graphs"],
-    }
-    mock.assert_called_once_with("contest.standings", {"contestId": "1"})
-
-
-def test_fetch_problem_tags_missing_tags(mocker):
-    """题目缺少 tags 字段 → 该题映射为空列表，不崩溃"""
-    response = {
-        "status": "OK",
-        "result": {
-            "contest": {"id": 2, "name": "CF Round #2"},
-            "problems": [
-                {"contestId": 2, "index": "A", "name": "No Tags Problem"},
-            ],
-            "rows": [],
-        },
-    }
-    mocker.patch("fetcher.cf_api_get", return_value=response)
-    mocker.patch("fetcher.time.sleep")
-
-    result = fetch_problem_tags(contest_id=2)
-
-    assert result == {"A": []}
-
-
-def test_fetch_problem_tags_handles_api_error(mocker):
-    """CFAPIError 透传"""
-    mocker.patch("fetcher.cf_api_get", side_effect=CFAPIError("CF API returned FAILED"))
-    mocker.patch("fetcher.time.sleep")
-
-    with pytest.raises(CFAPIError, match="CF API returned FAILED"):
-        fetch_problem_tags(contest_id=9999999)
-
-
 # ── tests: analyze_tags / analyze_rating_bands（M2-3b 分析层，纯函数）────────
 
 from analyzer import analyze_rating_bands, analyze_tags  # noqa: E402
@@ -238,9 +176,8 @@ def test_tag_analysis():
         submissions.append(_make_analysis_submission(sid, "C", ["greedy"], 1700, "TIME_LIMIT_EXCEEDED", 1500))
 
     assert len(submissions) == 100
-    tags_map = {"A": ["dp"], "B": ["math"], "C": ["greedy"]}
 
-    result = analyze_tags(submissions, tags_map)
+    result = analyze_tags(submissions)
 
     assert result["dp"]["total"] == 40
     assert result["dp"]["ac"] == 30
@@ -266,9 +203,8 @@ def test_tag_analysis_multi_tag_problem():
         _make_analysis_submission(1, "A", ["dp", "math"], 1500, "OK", 600),
         _make_analysis_submission(2, "A", ["dp", "math"], 1500, "WRONG_ANSWER", 300),
     ]
-    tags_map = {"A": ["dp", "math"]}
 
-    result = analyze_tags(submissions, tags_map)
+    result = analyze_tags(submissions)
 
     for tag in ("dp", "math"):
         assert result[tag]["total"] == 2
@@ -284,9 +220,8 @@ def test_tag_analysis_excludes_practice():
         _make_analysis_submission(2, "A", ["dp"], 1500, "OK", 600, "PRACTICE"),
         _make_analysis_submission(3, "A", ["dp"], 1500, "WRONG_ANSWER", 300, "VIRTUAL"),
     ]
-    tags_map = {"A": ["dp"]}
 
-    result = analyze_tags(submissions, tags_map)
+    result = analyze_tags(submissions)
 
     assert result["dp"]["total"] == 1
     assert result["dp"]["ac"] == 1
@@ -307,9 +242,8 @@ def test_rating_band_analysis():
         # 1900+: 1 AC
         _make_analysis_submission(6, "D", ["dp"], 2100, "OK", 3000),
     ]
-    tags_map: dict = {}
 
-    result = analyze_rating_bands(submissions, tags_map)
+    result = analyze_rating_bands(submissions)
 
     assert result["<1400"]["total"] == 2
     assert result["<1400"]["ac"] == 2
@@ -336,7 +270,7 @@ def test_rating_band_skips_unrated_problems():
         _make_analysis_submission(2, "B", ["dp"], 1500, "OK", 1000),
     ]
 
-    result = analyze_rating_bands(submissions, {})
+    result = analyze_rating_bands(submissions)
 
     total_across_bands = sum(band["total"] for band in result.values())
     assert total_across_bands == 1  # 只有 rated 的那条
@@ -344,8 +278,8 @@ def test_rating_band_skips_unrated_problems():
 
 def test_analysis_empty_submissions():
     """空数据 → 两个函数都返回空 dict / 全零 band，不崩溃"""
-    tags_result = analyze_tags([], {})
-    bands_result = analyze_rating_bands([], {})
+    tags_result = analyze_tags([])
+    bands_result = analyze_rating_bands([])
 
     assert tags_result == {}
     assert isinstance(bands_result, dict)

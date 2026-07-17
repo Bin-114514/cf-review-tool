@@ -15,3 +15,10 @@ dev = [
     "pytest>=9.1.1",
     "pytest-mock>=3.15.1",
 ]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: 需要真实 CF API 网络访问的测试（默认跳过，用 -m integration 单独运行）",
+]
+# 默认排除 integration 测试：离线/CI 可跑，不耗 CF API 配额
+addopts = "-m 'not integration'"

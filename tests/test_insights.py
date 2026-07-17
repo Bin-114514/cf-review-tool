@@ -114,29 +114,37 @@ def test_generate_insights_all_ac():
 
 
 def test_heaviest_penalty_dominates():
-    """D 题 3 次 WA 累计耗时 47min，占全场个人总罚时的主要部分 → insight 含 'D' 和百分比"""
+    """D 题 3 次 WA → 罚时数值和占比精确断言（分母含一发 AC 的 B 题）"""
     overview = _make_overview(problems_solved=4, total_problems=6)
     pairs = [
         _make_pair("D", "DP on Tree", [10, 11, 12], 13,
-                   wa_times=[100200, 100800, 101400], ac_time=102820),  # 3 WA, final AC at +2820s=47min
+                   wa_times=[100200, 100800, 101400], ac_time=102820),  # 3 WA, AC at +2820s
         _make_pair("A", "Water", [1], 2,
-                   wa_times=[100060], ac_time=100180),  # 1 WA, AC at +3min
+                   wa_times=[100060], ac_time=100180),  # 1 WA, AC at +180s
     ]
-    # Contest start = 100000, D solved at 102820 (+47min), A solved at 100180 (+3min)
-    # Total penalty: D: 47min + 3*10min = 77min; A: 3min + 1*10min = 13min
-    # D portion: 77/90 ≈ 85%
+    # Contest start = 100000（CF 罚时 = AC 距开赛秒数 + WA×600s）
+    # D: 2820 + 3*600 = 4620s = 77min
+    # A: 180 + 600 = 780s = 13min
+    # B: 一发 AC at +600s → 600s（无 WA，不进 per_problem 但计入分母）
+    # 总罚时 = 4620 + 780 + 600 = 6000s；D 占比 = 4620/6000 = 77%
     timeline = [
         _make_entry(1, "A", "WRONG_ANSWER", 100060),
         _make_entry(2, "A", "OK", 100180),
+        _make_entry(20, "B", "OK", 100600),  # clean AC：钉死分母含全部已解题
         _make_entry(10, "D", "WRONG_ANSWER", 100200),
         _make_entry(11, "D", "WRONG_ANSWER", 100800),
         _make_entry(12, "D", "WRONG_ANSWER", 101400),
         _make_entry(13, "D", "OK", 102820),
     ]
     result = generate_insights(overview, timeline, pairs, contest_start=100000)
-    # I3 修复：断言罚时专属输出（"罚时"字样），确保 _heaviest_penalty 被真正覆盖
-    has_penalty = any("D" in r and "罚时" in r for r in result)
-    assert has_penalty, f"Expected penalty insight mentioning 'D' and '罚时', got: {result}"
+
+    penalty = next((r for r in result if "罚时" in r and "最重" in r), None)
+    assert penalty is not None, f"Expected heaviest-penalty insight, got: {result}"
+    # 数值钉死：题号、WA 次数、罚时分钟、占比百分数
+    assert "D" in penalty
+    assert "3 次 WA" in penalty
+    assert "77min" in penalty, f"Expected 77min (4620s//60), got: {penalty}"
+    assert "77%" in penalty, f"Expected 77% (4620/6000), got: {penalty}"
 
 
 # ── tests: speed_tier ───────────────────────────────────────────────────────
@@ -249,8 +257,11 @@ def test_efficiency_trend_slowing():
 
     result = generate_insights(overview, timeline, pairs)
 
-    has_trend = any("放缓" in r or "间隔" in r for r in result)
-    assert has_trend, f"Expected efficiency trend insight, got: {result}"
+    trend = next((r for r in result if "放缓" in r), None)
+    assert trend is not None, f"Expected efficiency trend insight, got: {result}"
+    # 数值钉死：gaps = [7, 33] → 前半段均值 7min，后半段均值 33min
+    assert "33min" in trend, f"Expected second-half avg 33min, got: {trend}"
+    assert "7min" in trend, f"Expected first-half avg 7min, got: {trend}"
 
 
 def test_efficiency_trend_too_few_ac():

@@ -13,6 +13,20 @@ from fetcher import (
 # ── fixtures ──────────────────────────────────────────────────────────────────
 
 
+@pytest.fixture(autouse=True)
+def _no_real_sleep(request, mocker):
+    """跳过所有真实 time.sleep，套件从 ~25s 降到 <1s
+
+    integration 测试保留真实 sleep（遵守 CF rate limit）；
+    重试测试在用例内重新 patch 并断言自己的 mock，不受影响。
+    """
+    if "integration" in request.keywords:
+        yield
+    else:
+        mocker.patch("fetcher.time.sleep")
+        yield
+
+
 @pytest.fixture
 def standings_response() -> dict:
     """模拟 contest.standings?contestId=1&handles=tourist 的 CF 响应"""
@@ -122,8 +136,9 @@ def rating_changes_response() -> dict:
 # ── tests: cf_api_get (existing) ──────────────────────────────────────────────
 
 
+@pytest.mark.integration
 def test_api_connectivity():
-    """验证 CF API 可达且返回合法数据"""
+    """验证 CF API 可达且返回合法数据（integration：默认跳过，-m integration 单独运行）"""
     data = fetch_contest_list()
     assert data["status"] == "OK"
     assert isinstance(data["result"], list)
@@ -492,3 +507,76 @@ def test_fetch_recent_contests_handles_api_error(mocker):
 
     with pytest.raises(CFAPIError, match="CF API returned FAILED"):
         fetch_recent_contests(handle="tourist", count=10)
+
+
+# ── tests: fetch_user_submissions 分页（C1 修复）──────────────────────────────
+
+
+def _page_entry(sub_id: int, contest_id: int, creation: int) -> dict:
+    """构造一条分页测试用的提交记录"""
+    return {
+        "id": sub_id, "contestId": contest_id, "creationTimeSeconds": creation,
+        "problem": {"contestId": contest_id, "index": "A", "name": "P"},
+        "author": {"contestId": contest_id, "members": [{"handle": "tourist"}],
+                   "participantType": "CONTESTANT"},
+        "verdict": "OK", "programmingLanguage": "C++17",
+        "timeConsumedMillis": 1, "memoryConsumedBytes": 1,
+    }
+
+
+def test_fetch_user_submissions_paginates_to_old_contest(mocker):
+    """目标比赛提交在第 2 页（第 1 页满页全是更新的其他比赛提交）→ 翻页找到"""
+    # 第 1 页：100 条 contestId=999 的新提交（时间均晚于目标比赛开始，降序）
+    page1 = {"status": "OK",
+             "result": [_page_entry(i, 999, 2000200 - i) for i in range(1, 101)]}
+    # 第 2 页：目标比赛 contestId=1 的 2 条提交（短页 → 数据到底）
+    page2 = {"status": "OK",
+             "result": [_page_entry(200, 1, 1500000), _page_entry(201, 1, 1499000)]}
+    mock = mocker.patch("fetcher.cf_api_get", side_effect=[page1, page2])
+    mocker.patch("fetcher.time.sleep")
+
+    result = fetch_user_submissions(handle="tourist", contest_id=1, contest_start=1498000)
+
+    assert len(result) == 2
+    assert all(s["contestId"] == 1 for s in result)
+    assert mock.call_count == 2
+    assert mock.call_args_list[1].args[1]["from"] == "101"
+
+
+def test_fetch_user_submissions_stops_past_contest_start(mocker):
+    """整页提交都早于 contest_start → 提前终止，不再翻页"""
+    # 满页 100 条，全部早于 contest_start（后续页只会更旧）
+    page1 = {"status": "OK",
+             "result": [_page_entry(i, 999, 1000100 - i) for i in range(1, 101)]}
+    mock = mocker.patch("fetcher.cf_api_get", side_effect=[page1])
+    mocker.patch("fetcher.time.sleep")
+
+    result = fetch_user_submissions(handle="tourist", contest_id=1, contest_start=1498000)
+
+    assert result == []
+    assert mock.call_count == 1  # 早停：不发第 2 次请求
+
+
+# ── tests: handle 大小写不敏感（I1 修复）─────────────────────────────────────
+
+
+def test_fetch_contest_standings_case_insensitive_handle(mocker, standings_response):
+    """输入 'TOURIST' 也能匹配 standings 中的 'tourist' 行"""
+    mocker.patch("fetcher.cf_api_get", return_value=standings_response)
+    mocker.patch("fetcher.time.sleep")
+
+    result = fetch_contest_standings(contest_id=1, handle="TOURIST")
+
+    assert len(result["rows"]) == 1
+    assert result["rows"][0]["rank"] == 1
+
+
+def test_fetch_rating_changes_case_insensitive_handle(mocker, rating_changes_response):
+    """输入 'Tourist' 也能匹配 ratingChanges 中的 'tourist'"""
+    mocker.patch("fetcher.cf_api_get", return_value=rating_changes_response)
+    mocker.patch("fetcher.time.sleep")
+
+    result = fetch_rating_changes(contest_id=1, handle="Tourist")
+
+    assert result is not None
+    assert result["oldRating"] == 2600

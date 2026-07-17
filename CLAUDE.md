@@ -440,6 +440,22 @@ def generate_insights(overview, timeline, pairs, contest_start: int = 0) -> list
 
 **测试：** 18 个测试（tests/test_weakness.py），全量 71 个
 
+### M2 里程碑审查（2026-07-18，已修复）
+
+本轮修复（1 Critical + 5 Important + 5 Minor）：
+- [x] C1: fetch_user_submissions 分页化 — 100 条窗口导致老比赛静默空结果；现按 contest_start 提前终止（_MAX_SCAN=1000 保护上限）
+- [x] I1: handle 大小写不敏感匹配（standings/ratingChanges 用 casefold）+ 侧栏缓存键统一 .lower()
+- [x] I2: 删除死代码 fetch_problem_tags 及 tags_map 参数（需要时从 git history 恢复，按 (contestId, index) 重建）
+- [x] I3: 侧栏缓存不再吞 CFAPIError（防瞬时失败缓存 5min）+ 调用点 try/except 防 traceback 泄露
+- [x] I5: 罚时规则数值断言（77min/77%，fixture 含 clean-AC 钉死分母口径）+ 效率趋势均值断言
+- [x] I4: test_api_connectivity 标 @pytest.mark.integration，pytest 默认跳过（addopts = -m 'not integration'）
+- [x] M4: fetch_recent_contests 原地 reverse 污染 response（切片副本修复）
+- [x] M5: test_fetcher autouse mock time.sleep — 套件 25s → 0.3s
+- [x] M7: _fmt_avg_time 返回数值/None（原字符串导致字典序排序）
+- [x] M8: datetime.utcfromtimestamp → fromtimestamp(tz=timezone.utc)（3.12 废弃）
+- [x] M9: 时间线表格 width="stretch" 与弱点表格统一
+- [x] M11: config.toml 加固（showErrorDetails="none"、gatherUsageStats=false）
+
 ### M2 Backlog
 
 - [x] M2-3: 弱点识别 — 多场比赛交叉分析（按 tags / rating bands）— 已完成
@@ -455,8 +471,13 @@ def generate_insights(overview, timeline, pairs, contest_start: int = 0) -> list
 - [ ] _efficiency_trend 分钟取整后再平均，边界处可能误报
 - [ ] 弱点 Tab 惰性加载：st.tabs 每次 rerun 都执行两个 Tab 体，每次 Start Review 多付 ~5 次分页 API 调用（需先把 go 按钮迁到 session_state 才能安全改）
 - [ ] cf_api_get 对 status=FAILED（如 handle 不存在）也重试 4 次 — 非瞬时错误不应重试（改动影响既有测试，需确认）
-- [ ] 多用户并发时无进程级 CF API 节流（Streamlit Cloud 单 IP，CF 建议 ≤1 req/2s）
+- [ ] I6: 多用户并发时无进程级 CF API 节流（cf_api_get 加 threading.Lock + 时间戳门；Streamlit Cloud 单 IP，CF 建议 ≤1 req/2s）
 - [ ] gym 提交计入弱点分析场次 guard（gym 题通常无 rating/tags，表格会比 caption 显示的场次单薄）
+- [ ] M1(新): 提交总数恰为整页（100/200...）时 fetch_recent_submissions 多发一次空页请求（+1s）
+- [ ] M2(新): _heaviest_penalty 只数 WA，TLE→TLE→AC 零罚时但文案声称 CF 罚时语义 — 数全部非 OK 非 CE verdict 或软化文案
+- [ ] M3(新): rating band 标签 "1400-1600"/"1600-1900" 在 1600 处语义模糊（实为左闭右开），1600/1900 边界无测试 — 改 "1400-1599" 式标签
+- [ ] M6(新): ac_rate 分母含 CE/TESTING verdict；relativeTimeSeconds 缺失默认 0 拉低 avg_time
+- [ ] M10(新): 全榜 standings 下载与"关键技术决策"中 handles 参数的描述冲突（CF API 限制所致）— 更新文档，大场次瞬时内存风险知悉
 
 ### 全局约束（适用于所有 Task）
 

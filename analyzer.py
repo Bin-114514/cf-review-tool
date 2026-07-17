@@ -388,12 +388,11 @@ def _is_contestant(submission: dict[str, Any]) -> bool:
 
 def analyze_tags(
     submissions: list[dict[str, Any]],
-    tags_map: dict[str, list[str]],
 ) -> dict[str, dict[str, Any]]:
     """按题目 tag 交叉统计提交表现（纯函数）
 
     返回 {tag: {total, ac, wa, ac_rate, avg_time}}。
-    tags 查找顺序：tags_map[index] 优先，缺失时回退提交内联的 problem.tags。
+    tags 取自提交内联的 problem.tags（user.status 自带，跨比赛无 index 冲突）。
     avg_time = AC 提交的平均 relativeTimeSeconds（距开赛秒数）。
     """
     stats: dict[str, dict[str, Any]] = {}
@@ -402,8 +401,7 @@ def analyze_tags(
         if not _is_contestant(s):
             continue
         problem = s.get("problem", {})
-        index = problem.get("index", "?")
-        tags = tags_map.get(index) or problem.get("tags", [])
+        tags = problem.get("tags", [])
         verdict = s.get("verdict", "UNKNOWN")
         for tag in tags:
             bucket = stats.setdefault(tag, _blank_stats())
@@ -429,7 +427,6 @@ _RATING_BANDS: list[tuple[str, int, int]] = [
 
 def analyze_rating_bands(
     submissions: list[dict[str, Any]],
-    tags_map: dict[str, list[str]],
 ) -> dict[str, dict[str, Any]]:
     """按题目 rating 分段统计提交表现（纯函数）
 

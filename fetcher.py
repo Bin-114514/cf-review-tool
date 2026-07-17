@@ -56,31 +56,61 @@ def fetch_contest_standings(contest_id: int, handle: str) -> dict[str, Any]:
         {"contestId": str(contest_id)},
     )
     result = response["result"]
-    # 本地筛选目标 handle（CF API 不允许传递 handles 参数）
+    # 本地筛选目标 handle（CF API 不允许传递 handles 参数）；CF handle 大小写不敏感
+    target = handle.casefold()
     result["rows"] = [
         row for row in result.get("rows", [])
-        if any(m.get("handle") == handle for m in row.get("party", {}).get("members", []))
+        if any(
+            m.get("handle", "").casefold() == target
+            for m in row.get("party", {}).get("members", [])
+        )
     ]
     return result
 
 
-def fetch_user_submissions(handle: str, contest_id: int) -> list[dict[str, Any]]:
-    """获取用户在某场比赛的正式参赛提交记录
+# 分页保护上限：无 contest_start 时最多扫描的提交条数（避免高产用户无止境翻页）
+_MAX_SCAN = 1000
+
+
+def fetch_user_submissions(
+    handle: str,
+    contest_id: int,
+    contest_start: int = 0,
+) -> list[dict[str, Any]]:
+    """获取用户在某场比赛的正式参赛提交记录（分页拉取）
 
     只保留 participantType == CONTESTANT 的提交——
     赛后补题（PRACTICE）和虚拟参赛（VIRTUAL）共享 contestId，会污染复盘数据。
+
+    分页终止条件（user.status 按时间降序返回）：
+    1. 短页 → 数据到底
+    2. 整页提交都早于 contest_start → 更早的页不会再有该场比赛的提交
+    3. 扫描量达到 _MAX_SCAN → 保护上限（仅在 contest_start=0 时可能触发）
     """
-    time.sleep(1)
-    response = cf_api_get(
-        "user.status",
-        {"handle": handle, "from": "1", "count": "100"},
-    )
-    submissions = response.get("result", [])
-    return [
-        s for s in submissions
-        if s.get("contestId") == contest_id
-        and s.get("author", {}).get("participantType") == "CONTESTANT"
-    ]
+    matched: list[dict[str, Any]] = []
+    from_index = 1
+    while True:
+        time.sleep(1)
+        response = cf_api_get(
+            "user.status",
+            {"handle": handle, "from": str(from_index), "count": str(_PAGE_SIZE)},
+        )
+        page = response.get("result", [])
+        matched.extend(
+            s for s in page
+            if s.get("contestId") == contest_id
+            and s.get("author", {}).get("participantType") == "CONTESTANT"
+        )
+        if len(page) < _PAGE_SIZE:
+            break  # 数据到底
+        if contest_start and min(
+            s.get("creationTimeSeconds", 0) for s in page
+        ) < contest_start:
+            break  # 已越过该场比赛的时间范围
+        from_index += _PAGE_SIZE
+        if from_index > _MAX_SCAN:
+            break  # 保护上限
+    return matched
 
 
 def fetch_rating_changes(contest_id: int, handle: str) -> dict[str, Any] | None:
@@ -88,8 +118,10 @@ def fetch_rating_changes(contest_id: int, handle: str) -> dict[str, Any] | None:
     time.sleep(1)
     response = cf_api_get("contest.ratingChanges", {"contestId": str(contest_id)})
     changes = response.get("result", [])
+    # CF handle 大小写不敏感
+    target = handle.casefold()
     for change in changes:
-        if change.get("handle") == handle:
+        if change.get("handle", "").casefold() == target:
             return change
     return None
 
@@ -103,8 +135,8 @@ def fetch_recent_contests(handle: str, count: int = 10) -> list[dict[str, Any]]:
     time.sleep(1)
     response = cf_api_get("user.rating", {"handle": handle})
     history = response.get("result", [])
-    # CF API 返回按时间升序；取最后 count 条后反转
-    recent = history[-count:] if len(history) > count else history
+    # CF API 返回按时间升序；切片总是产生副本（避免原地 reverse 污染 response），再反转
+    recent = history[-count:]
     recent.reverse()
     return [
         {
@@ -141,11 +173,3 @@ def fetch_recent_submissions(handle: str, count: int = 500) -> list[dict[str, An
             break  # 数据到底
         from_index += _PAGE_SIZE
     return collected[:count]
-
-
-def fetch_problem_tags(contest_id: int) -> dict[str, list[str]]:
-    """获取某场比赛的题目 tags 映射 {index: [tags]}（M2-3 弱点分析数据源）"""
-    time.sleep(1)
-    response = cf_api_get("contest.standings", {"contestId": str(contest_id)})
-    problems = response.get("result", {}).get("problems", [])
-    return {p.get("index", "?"): p.get("tags", []) for p in problems}
