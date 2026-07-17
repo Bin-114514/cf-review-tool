@@ -168,3 +168,187 @@ def test_fetch_problem_tags_handles_api_error(mocker):
 
     with pytest.raises(CFAPIError, match="CF API returned FAILED"):
         fetch_problem_tags(contest_id=9999999)
+
+
+# ── tests: analyze_tags / analyze_rating_bands（M2-3b 分析层，纯函数）────────
+
+from analyzer import analyze_rating_bands, analyze_tags  # noqa: E402
+
+
+def _make_analysis_submission(
+    sub_id: int,
+    index: str = "A",
+    tags: list[str] | None = None,
+    rating: int | None = 1200,
+    verdict: str = "OK",
+    relative_time: int = 600,
+    participant_type: str = "CONTESTANT",
+) -> dict:
+    """构造一条用于弱点分析的原始提交记录（含 tags / rating / relativeTimeSeconds）"""
+    problem: dict = {"contestId": 1, "index": index, "name": f"Problem {index}"}
+    if tags is not None:
+        problem["tags"] = tags
+    if rating is not None:
+        problem["rating"] = rating
+    return {
+        "id": sub_id,
+        "contestId": 1,
+        "creationTimeSeconds": 1700000000 + sub_id,
+        "relativeTimeSeconds": relative_time,
+        "problem": problem,
+        "author": {
+            "contestId": 1,
+            "members": [{"handle": "tourist"}],
+            "participantType": participant_type,
+        },
+        "programmingLanguage": "C++17",
+        "verdict": verdict,
+        "timeConsumedMillis": 15,
+        "memoryConsumedBytes": 262144,
+    }
+
+
+def test_tag_analysis():
+    """100 条混合提交 → 各 tag 的 total/ac/wa/ac_rate/avg_time 统计正确"""
+    submissions: list[dict] = []
+    sid = 0
+    # dp: 30 AC (relative_time=600) + 10 WA → total 40, ac_rate 0.75
+    for _ in range(30):
+        sid += 1
+        submissions.append(_make_analysis_submission(sid, "A", ["dp"], 1500, "OK", 600))
+    for _ in range(10):
+        sid += 1
+        submissions.append(_make_analysis_submission(sid, "A", ["dp"], 1500, "WRONG_ANSWER", 300))
+    # math: 15 AC (relative_time=1200) + 15 WA → total 30, ac_rate 0.5
+    for _ in range(15):
+        sid += 1
+        submissions.append(_make_analysis_submission(sid, "B", ["math"], 1300, "OK", 1200))
+    for _ in range(15):
+        sid += 1
+        submissions.append(_make_analysis_submission(sid, "B", ["math"], 1300, "WRONG_ANSWER", 900))
+    # greedy: 20 AC + 5 WA + 5 TLE → total 30, ac 20, wa 5（TLE 不算 WA）
+    for _ in range(20):
+        sid += 1
+        submissions.append(_make_analysis_submission(sid, "C", ["greedy"], 1700, "OK", 1800))
+    for _ in range(5):
+        sid += 1
+        submissions.append(_make_analysis_submission(sid, "C", ["greedy"], 1700, "WRONG_ANSWER", 1500))
+    for _ in range(5):
+        sid += 1
+        submissions.append(_make_analysis_submission(sid, "C", ["greedy"], 1700, "TIME_LIMIT_EXCEEDED", 1500))
+
+    assert len(submissions) == 100
+    tags_map = {"A": ["dp"], "B": ["math"], "C": ["greedy"]}
+
+    result = analyze_tags(submissions, tags_map)
+
+    assert result["dp"]["total"] == 40
+    assert result["dp"]["ac"] == 30
+    assert result["dp"]["wa"] == 10
+    assert result["dp"]["ac_rate"] == pytest.approx(0.75)
+    assert result["dp"]["avg_time"] == pytest.approx(600)  # AC 提交的平均 relativeTimeSeconds
+
+    assert result["math"]["total"] == 30
+    assert result["math"]["ac"] == 15
+    assert result["math"]["wa"] == 15
+    assert result["math"]["ac_rate"] == pytest.approx(0.5)
+    assert result["math"]["avg_time"] == pytest.approx(1200)
+
+    assert result["greedy"]["total"] == 30
+    assert result["greedy"]["ac"] == 20
+    assert result["greedy"]["wa"] == 5  # TLE 不计入 wa
+    assert result["greedy"]["ac_rate"] == pytest.approx(20 / 30)
+
+
+def test_tag_analysis_multi_tag_problem():
+    """一道题多个 tags → 每个 tag 都计入该提交"""
+    submissions = [
+        _make_analysis_submission(1, "A", ["dp", "math"], 1500, "OK", 600),
+        _make_analysis_submission(2, "A", ["dp", "math"], 1500, "WRONG_ANSWER", 300),
+    ]
+    tags_map = {"A": ["dp", "math"]}
+
+    result = analyze_tags(submissions, tags_map)
+
+    for tag in ("dp", "math"):
+        assert result[tag]["total"] == 2
+        assert result[tag]["ac"] == 1
+        assert result[tag]["wa"] == 1
+        assert result[tag]["ac_rate"] == pytest.approx(0.5)
+
+
+def test_tag_analysis_excludes_practice():
+    """PRACTICE / VIRTUAL 提交不计入统计（只统计 rated 参赛）"""
+    submissions = [
+        _make_analysis_submission(1, "A", ["dp"], 1500, "OK", 600, "CONTESTANT"),
+        _make_analysis_submission(2, "A", ["dp"], 1500, "OK", 600, "PRACTICE"),
+        _make_analysis_submission(3, "A", ["dp"], 1500, "WRONG_ANSWER", 300, "VIRTUAL"),
+    ]
+    tags_map = {"A": ["dp"]}
+
+    result = analyze_tags(submissions, tags_map)
+
+    assert result["dp"]["total"] == 1
+    assert result["dp"]["ac"] == 1
+    assert result["dp"]["wa"] == 0
+
+
+def test_rating_band_analysis():
+    """按 rating 分段（<1400, 1400-1600, 1600-1900, 1900+）统计 AC 率和平均时间"""
+    submissions = [
+        # <1400: 2 AC
+        _make_analysis_submission(1, "A", ["math"], 1200, "OK", 300),
+        _make_analysis_submission(2, "A", ["math"], 1300, "OK", 500),
+        # 1400-1600: 1 AC + 1 WA
+        _make_analysis_submission(3, "B", ["dp"], 1500, "OK", 1000),
+        _make_analysis_submission(4, "B", ["dp"], 1400, "WRONG_ANSWER", 800),
+        # 1600-1900: 1 WA
+        _make_analysis_submission(5, "C", ["graphs"], 1700, "WRONG_ANSWER", 2000),
+        # 1900+: 1 AC
+        _make_analysis_submission(6, "D", ["dp"], 2100, "OK", 3000),
+    ]
+    tags_map: dict = {}
+
+    result = analyze_rating_bands(submissions, tags_map)
+
+    assert result["<1400"]["total"] == 2
+    assert result["<1400"]["ac"] == 2
+    assert result["<1400"]["ac_rate"] == pytest.approx(1.0)
+    assert result["<1400"]["avg_time"] == pytest.approx(400)  # (300+500)/2
+
+    assert result["1400-1600"]["total"] == 2
+    assert result["1400-1600"]["ac"] == 1
+    assert result["1400-1600"]["wa"] == 1
+    assert result["1400-1600"]["ac_rate"] == pytest.approx(0.5)
+
+    assert result["1600-1900"]["total"] == 1
+    assert result["1600-1900"]["ac"] == 0
+    assert result["1600-1900"]["ac_rate"] == pytest.approx(0.0)
+
+    assert result["1900+"]["total"] == 1
+    assert result["1900+"]["ac"] == 1
+
+
+def test_rating_band_skips_unrated_problems():
+    """题目无 rating 字段 → 不计入任何 band，不崩溃"""
+    submissions = [
+        _make_analysis_submission(1, "A", ["math"], None, "OK", 300),
+        _make_analysis_submission(2, "B", ["dp"], 1500, "OK", 1000),
+    ]
+
+    result = analyze_rating_bands(submissions, {})
+
+    total_across_bands = sum(band["total"] for band in result.values())
+    assert total_across_bands == 1  # 只有 rated 的那条
+
+
+def test_analysis_empty_submissions():
+    """空数据 → 两个函数都返回空 dict / 全零 band，不崩溃"""
+    tags_result = analyze_tags([], {})
+    bands_result = analyze_rating_bands([], {})
+
+    assert tags_result == {}
+    assert isinstance(bands_result, dict)
+    # 空数据下所有 band 计数为 0（或返回空 dict，二选一均可接受——以实现为准断言不崩溃）
+    for band in bands_result.values():
+        assert band["total"] == 0

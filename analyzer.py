@@ -360,3 +360,104 @@ def generate_insights(
         if insight is not None:
             results.append(insight)
     return results
+
+
+# ── M2-3b: 弱点识别 — 多场提交交叉分析（纯函数）──────────────────────────────
+#
+# 输入为 CF user.status 原始 dict（而非 Submission dataclass），
+# 因为 participantType 过滤需要 author 字段。
+
+
+def _blank_stats() -> dict[str, Any]:
+    """单个统计桶的初始值"""
+    return {"total": 0, "ac": 0, "wa": 0, "ac_rate": 0.0, "avg_time": 0.0}
+
+
+def _finalize_stats(bucket: dict[str, Any], ac_times: list[int]) -> None:
+    """计算派生指标：ac_rate 和 avg_time（AC 提交的平均 relativeTimeSeconds）"""
+    if bucket["total"] > 0:
+        bucket["ac_rate"] = bucket["ac"] / bucket["total"]
+    if ac_times:
+        bucket["avg_time"] = sum(ac_times) / len(ac_times)
+
+
+def _is_contestant(submission: dict[str, Any]) -> bool:
+    """只统计正式参赛（rated）的提交"""
+    return submission.get("author", {}).get("participantType") == "CONTESTANT"
+
+
+def analyze_tags(
+    submissions: list[dict[str, Any]],
+    tags_map: dict[str, list[str]],
+) -> dict[str, dict[str, Any]]:
+    """按题目 tag 交叉统计提交表现（纯函数）
+
+    返回 {tag: {total, ac, wa, ac_rate, avg_time}}。
+    tags 查找顺序：tags_map[index] 优先，缺失时回退提交内联的 problem.tags。
+    avg_time = AC 提交的平均 relativeTimeSeconds（距开赛秒数）。
+    """
+    stats: dict[str, dict[str, Any]] = {}
+    ac_times: dict[str, list[int]] = {}
+    for s in submissions:
+        if not _is_contestant(s):
+            continue
+        problem = s.get("problem", {})
+        index = problem.get("index", "?")
+        tags = tags_map.get(index) or problem.get("tags", [])
+        verdict = s.get("verdict", "UNKNOWN")
+        for tag in tags:
+            bucket = stats.setdefault(tag, _blank_stats())
+            bucket["total"] += 1
+            if verdict == "OK":
+                bucket["ac"] += 1
+                ac_times.setdefault(tag, []).append(s.get("relativeTimeSeconds", 0))
+            elif verdict == "WRONG_ANSWER":
+                bucket["wa"] += 1
+    for tag, bucket in stats.items():
+        _finalize_stats(bucket, ac_times.get(tag, []))
+    return stats
+
+
+# rating 分段边界：左闭右开，[下界, 上界)
+_RATING_BANDS: list[tuple[str, int, int]] = [
+    ("<1400", 0, 1400),
+    ("1400-1600", 1400, 1600),
+    ("1600-1900", 1600, 1900),
+    ("1900+", 1900, 10**9),
+]
+
+
+def analyze_rating_bands(
+    submissions: list[dict[str, Any]],
+    tags_map: dict[str, list[str]],
+) -> dict[str, dict[str, Any]]:
+    """按题目 rating 分段统计提交表现（纯函数）
+
+    分段：<1400, 1400-1600, 1600-1900, 1900+（左闭右开）。
+    无 rating 的题目跳过。返回 {band: {total, ac, wa, ac_rate, avg_time}}。
+    """
+    stats: dict[str, dict[str, Any]] = {name: _blank_stats() for name, _, _ in _RATING_BANDS}
+    ac_times: dict[str, list[int]] = {name: [] for name, _, _ in _RATING_BANDS}
+    for s in submissions:
+        if not _is_contestant(s):
+            continue
+        rating = s.get("problem", {}).get("rating")
+        if rating is None:
+            continue
+        band = next(
+            (name for name, lo, hi in _RATING_BANDS if lo <= rating < hi),
+            None,
+        )
+        if band is None:
+            continue
+        verdict = s.get("verdict", "UNKNOWN")
+        bucket = stats[band]
+        bucket["total"] += 1
+        if verdict == "OK":
+            bucket["ac"] += 1
+            ac_times[band].append(s.get("relativeTimeSeconds", 0))
+        elif verdict == "WRONG_ANSWER":
+            bucket["wa"] += 1
+    for band, bucket in stats.items():
+        _finalize_stats(bucket, ac_times[band])
+    return stats
