@@ -81,6 +81,7 @@ def _render_single_contest(
     pairs: list[ProblemCodePair],
     insights: list[str],
     contest_start: int,
+    contest_id: int,
 ) -> None:
     """Tab 1：单场复盘 — 总览卡片 + 柱状图 + 洞察 + 时间线 + WA 对比"""
     # ── 比赛总览卡片 ──
@@ -177,6 +178,11 @@ def _render_single_contest(
                             f"Memory: {wa.memory_bytes // 1024}KB"
                         )
                     st.code("\n\n".join(wa_blocks), language=None)
+                    # 提交 ID → CF 源码页链接（CF API 不返回源码，跳转官网查看）
+                    st.markdown(" · ".join(
+                        f'[📄 WA #{i}](https://codeforces.com/contest/{contest_id}/submission/{wa.id} "在 Codeforces 查看源码")'
+                        for i, wa in enumerate(pair.wa_submissions, 1)
+                    ))
                 with right:
                     ac_sub = pair.ac_submission
                     if ac_sub:
@@ -188,6 +194,7 @@ def _render_single_contest(
                             f"Memory: {ac_sub.memory_bytes // 1024}KB"
                         )
                         st.code(ac_text, language=None)
+                        st.markdown(f'[📄 AC](https://codeforces.com/contest/{contest_id}/submission/{ac_sub.id} "在 Codeforces 查看源码")')
         else:
             st.info("No WA→AC pairs — all problems either solved first-try or unsolved.")
 
@@ -359,7 +366,7 @@ def main() -> None:
     # ── 双 Tab 布局 ──
     tab_review, tab_weakness = st.tabs(["📊 单场复盘", "🎯 弱点分析"])
     with tab_review:
-        _render_single_contest(overview, submissions, timeline, pairs, insights, contest_start)
+        _render_single_contest(overview, submissions, timeline, pairs, insights, contest_start, int(contest_id))
     with tab_weakness:
         _render_weakness(handle)
 
