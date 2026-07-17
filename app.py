@@ -89,20 +89,18 @@ def _render_single_contest(
     # ── 比赛总览卡片 ──
     st.header(f"🏆 {overview.contest_name}")
 
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2 = st.columns(2)
     with c1:
         st.metric("Rank", f"#{overview.rank}" if overview.rank else "—")
-    with c2:
         st.metric("Old Rating", str(overview.old_rating) if overview.old_rating else "Unrated")
-    with c3:
+    with c2:
         delta_str = f"{overview.rating_delta:+d}" if overview.rating_delta else None
         st.metric("New Rating",
                   str(overview.new_rating) if overview.new_rating else "Unrated",
                   delta=delta_str)
-    with c4:
         total = len(submissions)
         ac = sum(1 for s in submissions if s.verdict == "OK")
-        st.metric("Submissions", f"✅ {ac} / ⬜ {total - ac}")
+        st.metric("Submissions", f"{ac} AC / {total} total")
 
     # ── 题目尝试次数柱状图 ──
     if submissions:
