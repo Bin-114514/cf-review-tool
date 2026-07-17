@@ -2,10 +2,14 @@ from typing import Any
 
 import pytest
 from analyzer import (
+    ContestOverview,
     ProblemCodePair,
     Submission,
     TimelineEntry,
+    build_submissions_from_status,
     build_timeline,
+    calculate_contest_start,
+    extract_overview,
     extract_wa_ac_pairs,
 )
 
@@ -188,3 +192,90 @@ def test_type_hints():
                          language="py", memory_bytes=0, time_millis=0, creation_time=0, solved=True)
     assert ProblemCodePair(problem_index="X", problem_name="X", wa_submissions=[],
                            ac_submission=None, failed_attempts=0)
+    assert ContestOverview(handle="test", contest_name="Test", rank=1,
+                           old_rating=1500, new_rating=1600, rating_delta=100,
+                           problems_solved=3, total_problems=5)
+
+
+# ── tests: build_submissions_from_status ──────────────────────────────────────
+
+
+def test_build_submissions_from_status():
+    """将 CF user.status 转为 Submission 列表，按时间排序"""
+    raw = [
+        {"id": 1, "contestId": 1, "problem": {"index": "A", "name": "Watermelon"},
+         "verdict": "OK", "programmingLanguage": "C++17", "memoryConsumedBytes": 262144,
+         "timeConsumedMillis": 15, "creationTimeSeconds": 300},
+        {"id": 2, "contestId": 1, "problem": {"index": "A", "name": "Watermelon"},
+         "verdict": "WRONG_ANSWER", "programmingLanguage": "C++17", "memoryConsumedBytes": 524288,
+         "timeConsumedMillis": 30, "creationTimeSeconds": 100},
+    ]
+    result = build_submissions_from_status(raw, contest_id=1)
+    assert len(result) == 2
+    assert result[0].creation_time == 100
+    assert result[1].creation_time == 300
+    assert result[1].verdict == "OK"
+
+
+def test_build_submissions_from_status_excludes_other_contests():
+    """过滤掉不匹配 contestId 的提交"""
+    raw = [
+        {"id": 1, "contestId": 1, "problem": {"index": "A", "name": "A"}, "verdict": "OK",
+         "programmingLanguage": "py", "memoryConsumedBytes": 0, "timeConsumedMillis": 0,
+         "creationTimeSeconds": 100},
+        {"id": 2, "contestId": 999, "problem": {"index": "B", "name": "B"}, "verdict": "OK",
+         "programmingLanguage": "py", "memoryConsumedBytes": 0, "timeConsumedMillis": 0,
+         "creationTimeSeconds": 200},
+    ]
+    result = build_submissions_from_status(raw, contest_id=1)
+    assert len(result) == 1
+    assert result[0].id == 1
+
+
+# ── tests: extract_overview ───────────────────────────────────────────────────
+
+
+STUB_STANDINGS = {
+    "contest": {"id": 1, "name": "CF Round #1", "startTimeSeconds": 1263849600},
+    "problems": [{"index": "A"}, {"index": "B"}, {"index": "C"}],
+    "rows": [{"rank": 42, "problemResults": [
+        {"points": 500, "rejectedAttemptCount": 0},
+        {"points": 500, "rejectedAttemptCount": 2},
+        {"points": 0, "rejectedAttemptCount": 0},
+    ]}],
+}
+
+
+def test_extract_overview_with_rating():
+    """有 rating_change → 返回完整 overview"""
+    rc = {"handle": "tourist", "oldRating": 1532, "newRating": 1621}
+    overview = extract_overview(STUB_STANDINGS, rc, "tourist")
+    assert overview.handle == "tourist"
+    assert overview.contest_name == "CF Round #1"
+    assert overview.rank == 42
+    assert overview.old_rating == 1532
+    assert overview.new_rating == 1621
+    assert overview.rating_delta == 89
+    assert overview.problems_solved == 2
+    assert overview.total_problems == 3
+
+
+def test_extract_overview_no_rating():
+    """rating_change=None → rating 字段填 0"""
+    overview = extract_overview(STUB_STANDINGS, None, "tourist")
+    assert overview.old_rating == 0
+    assert overview.new_rating == 0
+    assert overview.rating_delta == 0
+
+
+# ── tests: calculate_contest_start ────────────────────────────────────────────
+
+
+def test_calculate_contest_start():
+    """从 standings 提取比赛开始时间"""
+    assert calculate_contest_start(STUB_STANDINGS) == 1263849600
+
+
+def test_calculate_contest_start_default():
+    """无 startTimeSeconds → 返回 0"""
+    assert calculate_contest_start({}) == 0

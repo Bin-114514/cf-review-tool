@@ -41,6 +41,84 @@ class ProblemCodePair:
     failed_attempts: int
 
 
+@dataclass
+class ContestOverview:
+    """比赛总览数据"""
+    handle: str
+    contest_name: str
+    rank: int
+    old_rating: int
+    new_rating: int
+    rating_delta: int
+    problems_solved: int
+    total_problems: int
+
+
+def build_submissions_from_status(
+    status_data: list[dict[str, Any]],
+    contest_id: int,
+) -> list[Submission]:
+    """将 CF user.status 原始数据转为 Submission 列表，按 creation_time 升序（纯函数）"""
+    result: list[Submission] = []
+    for s in status_data:
+        if s.get("contestId") != contest_id:
+            continue
+        prob = s.get("problem", {})
+        result.append(Submission(
+            id=s.get("id", 0),
+            problem_index=prob.get("index", "?"),
+            problem_name=prob.get("name", "Unknown"),
+            verdict=s.get("verdict", "UNKNOWN"),
+            language=s.get("programmingLanguage", "?"),
+            memory_bytes=s.get("memoryConsumedBytes", 0),
+            time_millis=s.get("timeConsumedMillis", 0),
+            creation_time=s.get("creationTimeSeconds", 0),
+        ))
+    result.sort(key=lambda s: s.creation_time)
+    return result
+
+
+def calculate_contest_start(standings: dict[str, Any]) -> int:
+    """从 standings 中提取比赛开始时间（Unix timestamp）（纯函数）"""
+    contest = standings.get("contest", {})
+    return contest.get("startTimeSeconds", 0)
+
+
+def extract_overview(
+    standings: dict[str, Any],
+    rating_change: dict[str, Any] | None,
+    handle: str,
+) -> ContestOverview:
+    """从 standings 和 ratingChanges 中提取比赛总览（纯函数）"""
+    contest = standings.get("contest", {})
+    problems = standings.get("problems", [])
+    rows = standings.get("rows", [])
+    user_row = rows[0] if rows else {}
+
+    problem_results = user_row.get("problemResults", [])
+    problems_solved = sum(1 for p in problem_results if p.get("points", 0) > 0)
+
+    rank = user_row.get("rank", 0)
+
+    if rating_change is not None:
+        old_rating = rating_change.get("oldRating", 0)
+        new_rating = rating_change.get("newRating", 0)
+    else:
+        old_rating = 0
+        new_rating = 0
+
+    return ContestOverview(
+        handle=handle,
+        contest_name=contest.get("name", f"Contest {contest.get('id', '?')}"),
+        rank=rank,
+        old_rating=old_rating,
+        new_rating=new_rating,
+        rating_delta=new_rating - old_rating,
+        problems_solved=problems_solved,
+        total_problems=len(problems),
+    )
+
+
 def build_timeline(
     submissions: list[Submission],
     problems: list[dict[str, Any]],
