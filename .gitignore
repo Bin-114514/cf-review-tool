@@ -8,3 +8,7 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Playwright / browser artifacts
+.playwright-mcp/
+result.png
