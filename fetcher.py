@@ -45,13 +45,23 @@ def fetch_contest_list() -> dict[str, Any]:
 
 
 def fetch_contest_standings(contest_id: int, handle: str) -> dict[str, Any]:
-    """获取指定比赛的 standings 数据（单用户）"""
+    """获取指定比赛的 standings 数据（单用户）
+
+    CF API 要求 standings 只能用匿名 GET（仅 contestId 参数，不带 showUnofficial）。
+    因此拉取全部排名后在本地筛选目标 handle。
+    """
     time.sleep(1)
     response = cf_api_get(
         "contest.standings",
-        {"contestId": str(contest_id), "handles": handle, "showUnofficial": "false"},
+        {"contestId": str(contest_id)},
     )
-    return response["result"]
+    result = response["result"]
+    # 本地筛选目标 handle（CF API 不允许传递 handles 参数）
+    result["rows"] = [
+        row for row in result.get("rows", [])
+        if any(m.get("handle") == handle for m in row.get("party", {}).get("members", []))
+    ]
+    return result
 
 
 def fetch_user_submissions(handle: str, contest_id: int) -> list[dict[str, Any]]:

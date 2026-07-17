@@ -196,7 +196,7 @@ def test_fetch_contest_standings_returns_result(mocker, standings_response):
     assert result["rows"][0]["rank"] == 1
     mock.assert_called_once_with(
         "contest.standings",
-        {"contestId": "1", "handles": "tourist", "showUnofficial": "false"},
+        {"contestId": "1"},
     )
 
 
