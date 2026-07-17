@@ -102,7 +102,7 @@ def _render_single_contest(
     with c4:
         total = len(submissions)
         ac = sum(1 for s in submissions if s.verdict == "OK")
-        st.metric("Submissions", f"{ac} AC / {total} total")
+        st.metric("Submissions", f"✅ {ac} / ⬜ {total - ac}")
 
     # ── 题目尝试次数柱状图 ──
     if submissions:
