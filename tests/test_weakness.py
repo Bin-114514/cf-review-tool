@@ -352,3 +352,50 @@ def test_analysis_empty_submissions():
     # 空数据下所有 band 计数为 0（或返回空 dict，二选一均可接受——以实现为准断言不崩溃）
     for band in bands_result.values():
         assert band["total"] == 0
+
+
+# ── tests: count_contestant_contests（弱点分析场次 guard）───────────────────
+
+from analyzer import count_contestant_contests  # noqa: E402
+
+
+def test_count_contestant_contests():
+    """统计 CONTESTANT 提交覆盖的不同比赛场数"""
+    submissions = [
+        _make_analysis_submission(1, "A", ["dp"], 1500, "OK", 600, "CONTESTANT"),
+        _make_analysis_submission(2, "B", ["dp"], 1500, "OK", 600, "CONTESTANT"),
+    ]
+    submissions[0]["contestId"] = 100
+    submissions[1]["contestId"] = 200
+
+    assert count_contestant_contests(submissions) == 2
+
+
+def test_count_contestant_contests_dedupes_same_contest():
+    """同一比赛的多条提交只算一场"""
+    submissions = [
+        _make_analysis_submission(1, "A", ["dp"], 1500, "OK", 600, "CONTESTANT"),
+        _make_analysis_submission(2, "B", ["dp"], 1500, "WRONG_ANSWER", 700, "CONTESTANT"),
+    ]
+    # 两条默认 contestId=1
+    assert count_contestant_contests(submissions) == 1
+
+
+def test_count_contestant_contests_excludes_practice_and_none():
+    """PRACTICE/VIRTUAL 提交和缺 contestId 的提交不计入"""
+    subs = [
+        _make_analysis_submission(1, "A", ["dp"], 1500, "OK", 600, "CONTESTANT"),
+        _make_analysis_submission(2, "A", ["dp"], 1500, "OK", 600, "PRACTICE"),
+        _make_analysis_submission(3, "A", ["dp"], 1500, "OK", 600, "VIRTUAL"),
+    ]
+    subs[1]["contestId"] = 300  # practice 的另一场：不计
+    no_cid = _make_analysis_submission(4, "A", ["dp"], 1500, "OK", 600, "CONTESTANT")
+    del no_cid["contestId"]
+    subs.append(no_cid)
+
+    assert count_contestant_contests(subs) == 1
+
+
+def test_count_contestant_contests_empty():
+    """空列表 → 0"""
+    assert count_contestant_contests([]) == 0

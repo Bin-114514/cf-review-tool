@@ -421,17 +421,42 @@ def generate_insights(overview, timeline, pairs, contest_start: int = 0) -> list
 
 ### M2 Backlog
 
-- [ ] M2-3: 弱点识别 — 多场比赛交叉分析（按 tags / rating bands）
+### M2-3: 弱点识别 ✅
+
+**状态：** 已完成（M2-3a 数据层 + M2-3b 分析层 + M2-3c UI）
+
+**数据层（fetcher.py）：**
+- `fetch_recent_submissions(handle, count=500)` — 分页拉取（from=1→101→...，短页即停，页间 ≥1s）
+- `fetch_problem_tags(contest_id)` — `{index: [tags]}` 映射
+
+**分析层（analyzer.py，纯函数）：**
+- `analyze_tags(submissions, tags_map)` — 每 tag `{total, ac, wa, ac_rate, avg_time}`；多 tag 题计入每个 tag；CONTESTANT-only；TLE 不算 WA
+- `analyze_rating_bands(submissions, tags_map)` — `<1400 / 1400-1600 / 1600-1900 / 1900+`（左闭右开）
+- `count_contestant_contests(submissions)` — 弱点分析场次 guard
+
+**UI（app.py）：** 双 Tab 布局（📊 单场复盘 / 🎯 弱点分析）。弱点 Tab：Tag 表格 + Rating 段表格，AC 率 ProgressColumn 颜色条，按 AC 率升序（最弱在上），零 AC 项耗时显示"—"；<3 场正式参赛显示空状态提示。
+
+**隐私（security review 确认）：** `st.cache_data` 无 persist 参数 → 仅进程内存，不落盘；全仓无用户数据文件写入。
+
+**测试：** 18 个测试（tests/test_weakness.py），全量 71 个
+
+### M2 Backlog
+
+- [x] M2-3: 弱点识别 — 多场比赛交叉分析（按 tags / rating bands）— 已完成
 - [ ] M2-4: AtCoder 支持（推迟到 M3）
 - [ ] M2-5: 分享链接功能（推迟到 M3）
 - [x] app.py 接线 generate_insights（"洞察"区域，传入 contest_start）— 已完成
-- [ ] I4: fetch_user_submissions 过滤 participantType == "CONTESTANT"（赛后补题污染洞察，接线后已用户可见，建议优先）
+- [x] I4: fetch_user_submissions 过滤 participantType == "CONTESTANT" — 已完成
+- [x] app.py st.exception 传入 str 而非异常对象 — 已删除该调用
 - [ ] M11: 规则函数复用 TimelineEntry.solved 字段，消除重复 verdict == "OK" 判断
 - [ ] build_problem_timeline(submissions, problems) — 按题目分组的时间线（M1 遗留）
 - [ ] 洞察上限 [:6] 移入 analyzer（generate_insights 加 limit 参数）— 第 7 条规则出现时处理
 - [ ] extract_wa_ac_pairs 计入 AC 后的 WA，与 _heaviest_penalty 的 pre-AC 过滤口径不一致
 - [ ] _efficiency_trend 分钟取整后再平均，边界处可能误报
-- [ ] app.py st.exception 传入 str 而非异常对象，traceback 不显示
+- [ ] 弱点 Tab 惰性加载：st.tabs 每次 rerun 都执行两个 Tab 体，每次 Start Review 多付 ~5 次分页 API 调用（需先把 go 按钮迁到 session_state 才能安全改）
+- [ ] cf_api_get 对 status=FAILED（如 handle 不存在）也重试 4 次 — 非瞬时错误不应重试（改动影响既有测试，需确认）
+- [ ] 多用户并发时无进程级 CF API 节流（Streamlit Cloud 单 IP，CF 建议 ≤1 req/2s）
+- [ ] gym 提交计入弱点分析场次 guard（gym 题通常无 rating/tags，表格会比 caption 显示的场次单薄）
 
 ### 全局约束（适用于所有 Task）
 

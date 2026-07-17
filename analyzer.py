@@ -461,3 +461,12 @@ def analyze_rating_bands(
     for band, bucket in stats.items():
         _finalize_stats(bucket, ac_times[band])
     return stats
+
+
+def count_contestant_contests(submissions: list[dict[str, Any]]) -> int:
+    """统计 CONTESTANT 提交覆盖的不同比赛场数（纯函数，弱点分析数据量 guard）"""
+    return len({
+        s["contestId"]
+        for s in submissions
+        if _is_contestant(s) and s.get("contestId") is not None
+    })
