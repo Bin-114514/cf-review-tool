@@ -9,6 +9,10 @@ wheels/
 # Virtual environments
 .venv
 
+# Environment / secrets
+.env
+.streamlit/secrets.toml
+
 # Playwright / browser artifacts
 .playwright-mcp/
 result.png
