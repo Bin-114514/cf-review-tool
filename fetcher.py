@@ -84,3 +84,27 @@ def fetch_rating_changes(contest_id: int, handle: str) -> dict[str, Any] | None:
         if change.get("handle") == handle:
             return change
     return None
+
+
+def fetch_recent_contests(handle: str, count: int = 10) -> list[dict[str, Any]]:
+    """获取用户最近 N 场 rated 比赛列表（按时间降序，最新在前）
+
+    调用 CF API user.rating 端点（无需鉴权），返回每条记录：
+    contestId, contestName, rank, ratingChange(new-old), date(Unix timestamp)
+    """
+    time.sleep(1)
+    response = cf_api_get("user.rating", {"handle": handle})
+    history = response.get("result", [])
+    # CF API 返回按时间升序；取最后 count 条后反转
+    recent = history[-count:] if len(history) > count else history
+    recent.reverse()
+    return [
+        {
+            "contestId": entry["contestId"],
+            "contestName": entry["contestName"],
+            "rank": entry["rank"],
+            "ratingChange": entry["newRating"] - entry["oldRating"],
+            "date": entry["ratingUpdateTimeSeconds"],
+        }
+        for entry in recent
+    ]

@@ -18,12 +18,27 @@ from analyzer import (
     extract_overview,
     extract_wa_ac_pairs,
 )
-from fetcher import CFAPIError, fetch_contest_standings, fetch_rating_changes, fetch_user_submissions
+from fetcher import (
+    CFAPIError,
+    fetch_contest_standings,
+    fetch_rating_changes,
+    fetch_recent_contests,
+    fetch_user_submissions,
+)
 
 # CF handle 规则: 3–24 字符，字母/数字/下划线/连字符
 _HANDLE_RE = re.compile(r"^[a-zA-Z0-9._-]{3,24}$")
 # 与 st.spinner 共用文案，避免硬编码
 _ERROR_GENERIC = "Failed to load contest data. Check your inputs or try again later."
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _cached_recent_contests(handle: str) -> list[dict[str, object]]:
+    """缓存 fetch_recent_contests 结果，避免每次 re-render 都调用 CF API"""
+    try:
+        return fetch_recent_contests(handle, count=10)
+    except CFAPIError:
+        return []
 
 
 def _color_rows(row):
@@ -45,10 +60,37 @@ def main():
     with st.sidebar:
         st.header("Input")
         handle = st.text_input("Handle", value="tourist")
-        contest_id = st.number_input("Contest ID", min_value=1, step=1, value=2245)
         handle_ok = bool(_HANDLE_RE.match(handle))
         if handle and not handle_ok:
             st.caption("⚠️ Handle must be 3–24 chars: letters, digits, `.`, `-`, `_`.")
+
+        # 最近 N 场比赛选择器
+        recent_contest_id: int | None = None
+        if handle_ok:
+            recent = _cached_recent_contests(handle)
+            if recent:
+                options: dict[str, int] = {}
+                for c in recent:
+                    date_str = datetime.utcfromtimestamp(c["date"]).strftime("%Y-%m-%d")
+                    label = f"{date_str} · {c['contestName']} · #{c['rank']}"
+                    options[label] = c["contestId"]
+                picked = st.selectbox(
+                    "Recent rated contests",
+                    options=["(choose a contest)"] + list(options.keys()),
+                    key="contest_picker",
+                )
+                if picked and picked != "(choose a contest)":
+                    recent_contest_id = options[picked]
+            else:
+                st.caption("No rated contests found for this handle.")
+
+        # contest_id: 选择器优先，否则手动输入
+        contest_id = st.number_input(
+            "Contest ID",
+            min_value=1,
+            step=1,
+            value=recent_contest_id if recent_contest_id else 2245,
+        )
         go = st.button(
             "Start Review",
             type="primary",

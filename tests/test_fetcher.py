@@ -5,6 +5,7 @@ from fetcher import (
     fetch_contest_list,
     fetch_contest_standings,
     fetch_rating_changes,
+    fetch_recent_contests,
     fetch_user_submissions,
 )
 
@@ -349,3 +350,106 @@ def test_fetch_rating_changes_return_type(mocker):
     mocker.patch("fetcher.cf_api_get", return_value={"status": "OK", "result": []})
     result = fetch_rating_changes(1, "tourist")
     assert result is None
+
+
+# ── tests: fetch_recent_contests ────────────────────────────────────────────
+
+
+@pytest.fixture
+def rating_history_response() -> dict:
+    """模拟 user.rating?handle=tourist 的 CF 响应（最近 3 场 rated 比赛）"""
+    return {
+        "status": "OK",
+        "result": [
+            {
+                "contestId": 100, "contestName": "CF Round #100", "handle": "tourist",
+                "rank": 5, "oldRating": 1400, "newRating": 1500,
+                "ratingUpdateTimeSeconds": 1700000000,
+            },
+            {
+                "contestId": 200, "contestName": "CF Round #200", "handle": "tourist",
+                "rank": 3, "oldRating": 1500, "newRating": 1580,
+                "ratingUpdateTimeSeconds": 1710000000,
+            },
+            {
+                "contestId": 300, "contestName": "CF Round #300", "handle": "tourist",
+                "rank": 1, "oldRating": 1580, "newRating": 1700,
+                "ratingUpdateTimeSeconds": 1720000000,
+            },
+        ],
+    }
+
+
+def test_fetch_recent_contests_extracts_fields(mocker, rating_history_response: dict):
+    """验证正确提取 contestId、contestName、rank、ratingChange、date"""
+    mock = mocker.patch("fetcher.cf_api_get", return_value=rating_history_response)
+
+    result = fetch_recent_contests(handle="tourist", count=3)
+
+    assert len(result) == 3
+    # CF API user.rating 按时间升序返回，fetch_recent_contests 应反转为降序（最新在前）
+    assert result[0]["contestId"] == 300
+    assert result[0]["contestName"] == "CF Round #300"
+    assert result[0]["rank"] == 1
+    assert result[0]["ratingChange"] == 120  # 1700 - 1580
+    assert result[0]["date"] == 1720000000
+    # 第二项
+    assert result[1]["contestId"] == 200
+    assert result[1]["ratingChange"] == 80
+    mock.assert_called_once_with("user.rating", {"handle": "tourist"})
+
+
+def test_fetch_recent_contests_limits_count(mocker, rating_history_response: dict):
+    """count=2 时只返回最近 2 场"""
+    mocker.patch("fetcher.cf_api_get", return_value=rating_history_response)
+
+    result = fetch_recent_contests(handle="tourist", count=2)
+
+    assert len(result) == 2
+    assert result[0]["contestId"] == 300
+    assert result[1]["contestId"] == 200
+
+
+def test_fetch_recent_contests_empty_for_new_user(mocker):
+    """user.rating 返回空数组 → 返回空列表"""
+    mocker.patch("fetcher.cf_api_get", return_value={"status": "OK", "result": []})
+
+    result = fetch_recent_contests(handle="new_user", count=10)
+
+    assert result == []
+
+
+def test_fetch_recent_contests_all_when_count_exceeds(mocker, rating_history_response: dict):
+    """count 超过实际条目数 → 返回全部（不截断也不报错）"""
+    mocker.patch("fetcher.cf_api_get", return_value=rating_history_response)
+
+    result = fetch_recent_contests(handle="tourist", count=100)
+
+    assert len(result) == 3
+
+
+def test_fetch_recent_contests_most_recent_order(mocker):
+    """验证结果按 date 降序排列（最新比赛在最前面）"""
+    response = {
+        "status": "OK",
+        "result": [
+            {"contestId": 1, "contestName": "Old", "handle": "x", "rank": 10,
+             "oldRating": 1000, "newRating": 1100, "ratingUpdateTimeSeconds": 1000000000},
+            {"contestId": 2, "contestName": "New", "handle": "x", "rank": 5,
+             "oldRating": 1100, "newRating": 1200, "ratingUpdateTimeSeconds": 2000000000},
+        ],
+    }
+    mocker.patch("fetcher.cf_api_get", return_value=response)
+
+    result = fetch_recent_contests(handle="x", count=10)
+
+    assert result[0]["contestId"] == 2
+    assert result[1]["contestId"] == 1
+
+
+def test_fetch_recent_contests_handles_api_error(mocker):
+    """CFAPIError 透传"""
+    mocker.patch("fetcher.cf_api_get", side_effect=CFAPIError("CF API returned FAILED"))
+
+    with pytest.raises(CFAPIError, match="CF API returned FAILED"):
+        fetch_recent_contests(handle="tourist", count=10)
