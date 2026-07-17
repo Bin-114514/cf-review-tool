@@ -17,6 +17,7 @@ from analyzer import (
     calculate_contest_start,
     extract_overview,
     extract_wa_ac_pairs,
+    generate_insights,
 )
 from fetcher import (
     CFAPIError,
@@ -122,6 +123,8 @@ def main():
     submissions = build_submissions_from_status(raw_subs, int(contest_id))
     contest_start = calculate_contest_start(standings)
     timeline = build_timeline(submissions)
+    pairs = extract_wa_ac_pairs(timeline)
+    insights = generate_insights(overview, timeline, pairs, contest_start)
 
     # ── 比赛总览卡片 ──
     st.header(f"🏆 {overview.contest_name}")
@@ -165,6 +168,15 @@ def main():
         )
         st.plotly_chart(fig, use_container_width=True)
 
+    # ── 比赛洞察（M2-2 启发式规则引擎）──
+    st.subheader("💡 比赛洞察")
+    if insights:
+        # analyzer 已按重要性排序，上限 6 条
+        for insight in insights[:6]:
+            st.info(insight)
+    else:
+        st.caption("本场比赛数据不足以生成洞察")
+
     # ── 逐题时间线 ──
     with st.expander("⏱ 逐题时间线", expanded=False):
         if timeline:
@@ -190,8 +202,6 @@ def main():
 
     # ── WA vs AC ──
     with st.expander("🔍 WA → AC 对比", expanded=False):
-        pairs = extract_wa_ac_pairs(timeline)
-
         if pairs:
             for pair in pairs:
                 st.subheader(

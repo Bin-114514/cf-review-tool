@@ -345,11 +345,12 @@ def generate_insights(
     contest_start 建议传入 calculate_contest_start(standings)；
     为 0 时罚时/速度锚点退回首提交时间（向后兼容）。
     """
+    # 按重要性排序：罚时 > 速度 > 一发 AC > 其他
     rules = [
         _heaviest_penalty,
         _speed_tier,
-        _wa_density,
         _one_shot_ac_praise,
+        _wa_density,
         _unsolved_warning,
         _efficiency_trend,
     ]

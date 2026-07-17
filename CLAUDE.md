@@ -405,27 +405,33 @@ def fetch_recent_contests(handle: str, count: int = 10) -> list[dict[str, Any]]:
 def generate_insights(overview, timeline, pairs, contest_start: int = 0) -> list[str]:
     """调六个规则函数，过滤 None，返回中文洞察列表"""
 ```
-六个规则（统一签名 `(overview, timeline, pairs, contest_start) -> str | None`）：
+六个规则（统一签名 `(overview, timeline, pairs, contest_start) -> str | None`，按重要性排序）：
 - `_heaviest_penalty` — 罚时占比最大的 WA 题（CF 罚时 = AC 距开赛 + WA×10min）
 - `_speed_tier` — 前 30min 内 AC 题数
-- `_wa_density` — WA ≥ 3 次的所有题目警告
 - `_one_shot_ac_praise` — 一发 AC 表扬
+- `_wa_density` — WA ≥ 3 次的所有题目警告
 - `_unsolved_warning` — 有提交无 AC 警告
 - `_efficiency_trend` — 相邻 AC 间隔放缓检测（≥3 AC 才触发）
 
-**关键设计：** `contest_start=0` 时锚点退回首提交时间（向后兼容）；app.py 接线时传 `calculate_contest_start(standings)` 获得准确罚时。
+**关键设计：** `contest_start=0` 时锚点退回首提交时间（向后兼容）；app.py 接线传 `calculate_contest_start(standings)` 获得准确罚时。
 
-**测试：** 11 个测试（tests/test_insights.py），含锚点回归测试
+**UI 集成（已完成）：** app.py 总览柱状图下方"💡 比赛洞察"区域，每条 `st.info()` 蓝色卡片，上限 6 条，空状态显示"本场比赛数据不足以生成洞察"。
+
+**测试：** 12 个测试（tests/test_insights.py），含锚点回归测试和重要性排序测试
 
 ### M2 Backlog
 
 - [ ] M2-3: 弱点识别 — 多场比赛交叉分析（按 tags / rating bands）
 - [ ] M2-4: AtCoder 支持（推迟到 M3）
 - [ ] M2-5: 分享链接功能（推迟到 M3）
-- [ ] app.py 接线 generate_insights（新增"洞察"区域，传入 contest_start）
-- [ ] I4: fetch_user_submissions 过滤 participantType == "CONTESTANT"（赛后补题污染洞察）
+- [x] app.py 接线 generate_insights（"洞察"区域，传入 contest_start）— 已完成
+- [ ] I4: fetch_user_submissions 过滤 participantType == "CONTESTANT"（赛后补题污染洞察，接线后已用户可见，建议优先）
 - [ ] M11: 规则函数复用 TimelineEntry.solved 字段，消除重复 verdict == "OK" 判断
 - [ ] build_problem_timeline(submissions, problems) — 按题目分组的时间线（M1 遗留）
+- [ ] 洞察上限 [:6] 移入 analyzer（generate_insights 加 limit 参数）— 第 7 条规则出现时处理
+- [ ] extract_wa_ac_pairs 计入 AC 后的 WA，与 _heaviest_penalty 的 pre-AC 过滤口径不一致
+- [ ] _efficiency_trend 分钟取整后再平均，边界处可能误报
+- [ ] app.py st.exception 传入 str 而非异常对象，traceback 不显示
 
 ### 全局约束（适用于所有 Task）
 

@@ -267,6 +267,38 @@ def test_efficiency_trend_too_few_ac():
     assert not has_trend, f"Should NOT produce efficiency trend with only 1 AC, got: {result}"
 
 
+# ── tests: importance ordering ─────────────────────────────────────────────
+
+
+def test_insights_importance_order():
+    """洞察按重要性排序：罚时 > 速度 > 一发 AC（UI 截断 [:6] 依赖此顺序）"""
+    overview = _make_overview(problems_solved=3, total_problems=5)
+    # 构造同时触发罚时、速度、一发 AC 三条规则的数据：
+    # A: 开赛 +3min 一发 AC（速度 + 一发 AC）
+    # B: 1 WA 后 AC（罚时）
+    timeline = [
+        _make_entry(1, "A", "OK", 100000 + 3 * 60),
+        _make_entry(2, "B", "WRONG_ANSWER", 100000 + 10 * 60),
+        _make_entry(3, "B", "OK", 100000 + 20 * 60),
+    ]
+    pairs = [
+        _make_pair("B", "Problem B", [2], 3,
+                   wa_times=[100000 + 10 * 60], ac_time=100000 + 20 * 60),
+    ]
+
+    result = generate_insights(overview, timeline, pairs, contest_start=100000)
+
+    idx_penalty = next((i for i, r in enumerate(result) if "罚时" in r), None)
+    idx_speed = next((i for i, r in enumerate(result) if "前 30min" in r), None)
+    idx_oneshot = next((i for i, r in enumerate(result) if "一次通过" in r), None)
+    assert idx_penalty is not None, f"Missing penalty insight: {result}"
+    assert idx_speed is not None, f"Missing speed insight: {result}"
+    assert idx_oneshot is not None, f"Missing one-shot insight: {result}"
+    assert idx_penalty < idx_speed < idx_oneshot, (
+        f"Wrong order: penalty@{idx_penalty}, speed@{idx_speed}, oneshot@{idx_oneshot}: {result}"
+    )
+
+
 # ── tests: type hints (compile-time verification) ──────────────────────────
 
 
