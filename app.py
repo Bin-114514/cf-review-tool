@@ -133,20 +133,21 @@ def _render_single_contest(
         probs = per_problem_probability(overview, problem_ratings)
         if probs:
             prob_parts: list[str] = []
-            # timeline 中的序号顺序
-            seen: set[str] = set()
-            for entry in timeline:
-                idx = entry.problem_index
-                if idx in seen or idx not in probs:
+            # 按题分组，每组取最终状态（any AC = solved），兼容 WA→AC
+            groups: dict[str, list[TimelineEntry]] = {}
+            for e in timeline:
+                groups.setdefault(e.problem_index, []).append(e)
+            for idx, entries in sorted(groups.items()):
+                if idx not in probs:
                     continue
-                seen.add(idx)
                 P = probs[idx]
-                ac = entry.verdict == "OK"
-                if ac:
+                solved = any(e.verdict == "OK" for e in entries)
+                if solved:
+                    color = "green" if P <= 0.4 else "gray"
                     label = f"{idx} ✅ Solved (expected {P:.0%})"
                 else:
+                    color = "red" if P >= 0.6 else "gray"
                     label = f"{idx} ❌ Not solved (expected {P:.0%})"
-                color = "green" if P >= 0.6 else "red" if P <= 0.4 else "gray"
                 prob_parts.append(f":{color}[{label}]")
             if prob_parts:
                 st.caption("  ·  ".join(prob_parts))
@@ -307,7 +308,7 @@ def _render_weakness(handle: str) -> None:
         row: dict[str, object] = {"Tag": tag}
         for band_name, s in active_bands:
             rates = s.get("tags", {})
-            row[band_name] = rates.get(tag, None)
+            row[band_name] = rates.get(tag, 0.0)
         cross_rows.append(row)
 
     # 为每个 band 列创建 ProgressColumn
@@ -324,6 +325,7 @@ def _render_weakness(handle: str) -> None:
 
     df = pd.DataFrame(cross_rows)
     st.dataframe(df, column_config=col_config, width="stretch", hide_index=True)
+    st.caption("0% = 无该段提交或 AC 率为 0")
 
 
 def main() -> None:

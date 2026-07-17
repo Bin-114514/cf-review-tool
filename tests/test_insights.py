@@ -411,6 +411,13 @@ def test_insights_importance_order():
     assert idx_penalty < idx_speed < idx_oneshot, (
         f"Wrong order: penalty@{idx_penalty}, speed@{idx_speed}, oneshot@{idx_oneshot}: {result}"
     )
+    # 如有概率洞察（超出/低于预期），它应插在 speed 和 one-shot 之间
+    for i, r in enumerate(result):
+        if "超出预期" in r or "低于预期" in r:
+            assert idx_speed < i < idx_oneshot, (
+                f"Probability insight at #{i} should be between speed(#{idx_speed}) and oneshot(#{idx_oneshot}): {result}"
+            )
+            break
 
 
 # ── tests: per_problem_probability ─────────────────────────────────────────

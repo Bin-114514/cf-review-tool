@@ -362,7 +362,7 @@ def _solve_probability_insight(
             candidates.append((idx, P, False, deviation))
     if not candidates:
         return None
-    idx, P, solved, _ = max(candidates, key=lambda x: x[3])
+    idx, P, solved, _ = max(candidates, key=lambda x: (x[3], abs(x[1] - 0.5)))
     if solved:
         return (
             f"📊 {idx} 题 (rating {problem_ratings[idx]}) 预期通过率 {P:.0%}，"
