@@ -296,42 +296,63 @@ def _unsolved_warning(
     return f"🚫 未 AC 警告：{labels_str} 有提交但未通过，建议对照题解复查"
 
 
-def _efficiency_trend(
+def expected_solve_probability(contestant_rating: int, problem_rating: int) -> float:
+    """CF 官方 Elo 公式 — 选手解出某 rating 题目的概率（纯函数）
+
+    P = 1 / (1 + 10^((D - R) / 400))
+    其中 R = 选手 rating, D = 题目 rating.
+    R = D → P = 0.5; R - D = 200 → P ≈ 0.76; R - D = 400 → P ≈ 0.91.
+    """
+    return 1.0 / (1.0 + 10.0 ** ((problem_rating - contestant_rating) / 400.0))
+
+
+_PROB_HIGH = 0.60   # P ≥ 60% 时选手明显占优（约 70 分差距），没 AC 才值得提
+_PROB_LOW = 0.40    # P ≤ 40% 时题目明显偏难（约 70 分差距），AC 了才值得提
+
+
+def _solve_probability_insight(
     overview: ContestOverview,
     timeline: list[TimelineEntry],
     pairs: list[ProblemCodePair],
     contest_start: int = 0,
+    problem_ratings: dict[str, int] | None = None,
 ) -> str | None:
-    """按 AC 顺序计算相邻 AC 时间间隔，判断放缓趋势"""
-    if not timeline:
+    """对 AC / 未 AC 题目，使用 CF Elo 公式判断是否超出/低于预期（纯函数）
+
+    只有差距足够大（P ≥ 75% 或 P ≤ 35%）时才产生洞察。
+    接近 50% 的概率不值得提——"你可以解，也可能解不出"不是信息。
+    """
+    if not problem_ratings:
         return None
-    ac_times: list[tuple[str, int]] = []
-    seen: set[str] = set()
-    for e in timeline:
-        if e.verdict == "OK" and e.problem_index not in seen:
-            seen.add(e.problem_index)
-            ac_times.append((e.problem_index, e.creation_time))
-    if len(ac_times) < 3:  # 至少 3 道 AC 才有前后半段可比
-        return None
-    gaps = [
-        (ac_times[i][1] - ac_times[i - 1][1]) // 60
-        for i in range(1, len(ac_times))
-    ]
-    first_half_avg = sum(gaps[:len(gaps) // 2]) / (len(gaps) // 2)
-    second_half_avg = sum(gaps[len(gaps) // 2:]) / (len(gaps) - len(gaps) // 2)
-    # 最小间隔阈值：前半段平均 < 1min 时（间隔取整为 0），不足以判断趋势
-    if first_half_avg < 1:
-        return None
-    if second_half_avg > first_half_avg * 1.5:
-        details = "、".join(
-            f"{ac_times[i - 1][0]}→{ac_times[i][0]} {g}min"
-            for i, g in enumerate(gaps, 1) if g > 0
+    R = overview.old_rating
+    if R <= 0:
+        return None  # 无赛前 rating（unrated 选手首场）→ 无法计算
+    above: list[tuple[str, float]] = []   # 解决的概率低但 AC 了
+    below: list[tuple[str, float]] = []   # 概率高但没 AC
+    for idx, entries in _group_by_problem(timeline).items():
+        D = problem_ratings.get(idx)
+        if D is None:
+            continue
+        P = expected_solve_probability(R, D)
+        ac = any(e.verdict == "OK" for e in entries)
+        has_attempt = len(entries) > 0
+        if ac and P <= _PROB_LOW:
+            above.append((idx, P))
+        elif not ac and has_attempt and P >= _PROB_HIGH:
+            below.append((idx, P))
+
+    lines: list[str] = []
+    for idx, P in above:
+        lines.append(
+            f"📊 {idx} 题 (rating {problem_ratings[idx]}) 预期解题概率 {P:.0%}，"
+            f"你解出来了——超出预期"
         )
-        return (
-            f"📈 效率趋势：后期解题速度放缓（{details}），"
-            f"后半段平均间隔 {second_half_avg:.0f}min > 前半段 {first_half_avg:.0f}min"
+    for idx, P in below:
+        lines.append(
+            f"📊 {idx} 题 (rating {problem_ratings[idx]}) 预期解题概率 {P:.0%}，"
+            f"有提交但未通过——低于预期，建议重点复盘"
         )
-    return None
+    return "\n\n".join(lines) if lines else None
 
 
 def generate_insights(
@@ -339,26 +360,35 @@ def generate_insights(
     timeline: list[TimelineEntry],
     pairs: list[ProblemCodePair],
     contest_start: int = 0,
+    problem_ratings: dict[str, int] | None = None,
 ) -> list[str]:
     """生成多条中文比赛洞察（纯规则引擎，不调 API）
 
     contest_start 建议传入 calculate_contest_start(standings)；
     为 0 时罚时/速度锚点退回首提交时间（向后兼容）。
+    problem_ratings: {index: rating}，来自 standings.problems，用于概率洞察。
     """
-    # 按重要性排序：罚时 > 速度 > 一发 AC > 其他
-    rules = [
+    # 按重要性排序：罚时 > 速度 > 概率（替代效率趋势）> 一发 AC > 其他
+    rules: list = [
         _heaviest_penalty,
         _speed_tier,
         _one_shot_ac_praise,
         _wa_density,
         _unsolved_warning,
-        _efficiency_trend,
     ]
     results: list[str] = []
     for rule in rules:
         insight = rule(overview, timeline, pairs, contest_start)
         if insight is not None:
             results.append(insight)
+    # 概率洞察插在速度和一发 AC 之间（比趋势有信息量），不同签名需单独调用
+    prob = _solve_probability_insight(overview, timeline, pairs, contest_start, problem_ratings)
+    if prob is not None:
+        # 插在 speed_tier 之后（index 1）
+        results.insert(
+            next((i for i, r in enumerate(results) if "速度" in r or "⚡" in r), 0) + 1,
+            prob,
+        )
     return results
 
 

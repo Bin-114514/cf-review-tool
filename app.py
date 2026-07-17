@@ -356,12 +356,20 @@ def main() -> None:
             st.error(_ERROR_GENERIC)
             return
 
+    # ── 从 standings 提取 {problem_index: rating}，供概率洞察 ──
+    problem_ratings: dict[str, int] = {}
+    for p in standings.get("problems", []):
+        rating = p.get("rating")
+        index = p.get("index")
+        if rating is not None and index is not None:
+            problem_ratings[index] = rating
+
     # ── 数据分析 ──
     overview = extract_overview(standings, rating_change, handle)
     submissions = build_submissions_from_status(raw_subs, int(contest_id))
     timeline = build_timeline(submissions)
     pairs = extract_wa_ac_pairs(timeline)
-    insights = generate_insights(overview, timeline, pairs, contest_start)
+    insights = generate_insights(overview, timeline, pairs, contest_start, problem_ratings)
 
     # ── 双 Tab 布局 ──
     tab_review, tab_weakness = st.tabs(["📊 单场复盘", "🎯 弱点分析"])

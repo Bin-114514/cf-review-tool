@@ -1,5 +1,7 @@
 """Tests for M2-2 heuristic insight generation — pure rule engine, zero API calls."""
 
+import math
+
 import pytest
 from analyzer import (
     ContestOverview,
@@ -8,6 +10,7 @@ from analyzer import (
     TimelineEntry,
     build_submissions_from_status,
     build_timeline,
+    expected_solve_probability,
     extract_wa_ac_pairs,
     generate_insights,
 )
@@ -242,40 +245,142 @@ def test_unsolved_warning():
     assert has_warning, f"Expected unsolved warning mentioning 'E', got: {result}"
 
 
-# ── tests: efficiency_trend ─────────────────────────────────────────────────
+# ── tests: solve_probability ──────────────────────────────────────────────────
 
 
-def test_efficiency_trend_slowing():
-    """AC 间隔越来越大 → insight 包含 '放缓' 或 '间隔'"""
-    overview = _make_overview(problems_solved=3, total_problems=4)
+def test_expected_solve_probability_basic():
+    """验证 Elo 公式的基准值"""
+    # 等 rating → 50%
+    assert abs(expected_solve_probability(1500, 1500) - 0.5) < 0.01
+    # 高 200 → ~76%
+    assert abs(expected_solve_probability(1700, 1500) - 0.76) < 0.02
+    # 低 200 → ~24%
+    assert abs(expected_solve_probability(1500, 1700) - 0.24) < 0.02
+    # 高 400 → ~91%
+    assert abs(expected_solve_probability(1900, 1500) - 0.91) < 0.02
+
+
+def test_solve_probability_above_expectation():
+    """rating 1900 的题，选手 1850 (P≈43%)，AC 了 → 超出预期"""
+    overview = _make_overview(rank=10, problems_solved=3, total_problems=5)
+    overview = ContestOverview(
+        handle="tourist",
+        contest_name="CF Round #1",
+        rank=10,
+        old_rating=1500,   # 赛前 rating（概率用这个）
+        new_rating=1530,
+        rating_delta=30,
+        problems_solved=3,
+        total_problems=5,
+    )
     timeline = [
-        _make_entry(1, "A", "OK", 100000 + 5 * 60),    # A at +5min
-        _make_entry(2, "B", "OK", 100000 + 12 * 60),   # B at +12min  (gap 7min)
-        _make_entry(3, "C", "OK", 100000 + 45 * 60),   # C at +45min  (gap 33min)
+        _make_entry(1, "D", "WRONG_ANSWER", 100200),
+        _make_entry(2, "D", "OK", 100800),
+    ]
+    pairs = [
+        _make_pair("D", "Hard Problem", [1], 2,
+                   wa_times=[100200], ac_time=100800),
+    ]
+    # 题 D rating 2100 vs 选手 1500 → P = 1/(1+10^((2100-1500)/400)) = 1/(1+10^1.5) ≈ 3%
+    problem_ratings = {"D": 2100, "A": 1200, "B": 1300}
+
+    result = generate_insights(overview, timeline, pairs, problem_ratings=problem_ratings)
+
+    prob_line = next((r for r in result if "概率" in r), None)
+    assert prob_line is not None, f"Expected probability insight for D, got: {result}"
+    assert "3%" in prob_line or "4%" in prob_line, f"Expected ~3% probability (1500 vs 2100), got: {prob_line}"
+    assert ("超出预期" in prob_line or "above" in prob_line.lower()), f"Expected above-expectation, got: {prob_line}"
+
+
+def test_solve_probability_below_expectation():
+    """rating 1300 的题，选手 1800 (P≈95%)，没 AC 只有 WA → 低于预期"""
+    overview = _make_overview(problems_solved=2, total_problems=4)
+    overview = ContestOverview(
+        handle="tourist",
+        contest_name="CF Round #1",
+        rank=50,
+        old_rating=2100,
+        new_rating=2080,
+        rating_delta=-20,
+        problems_solved=2,
+        total_problems=4,
+    )
+    timeline = [
+        _make_entry(1, "A", "OK", 100300),
+        _make_entry(2, "B", "OK", 100800),
+        _make_entry(3, "C", "WRONG_ANSWER", 101500),  # 简单题 WA，没 AC
+        _make_entry(4, "C", "WRONG_ANSWER", 102000),
     ]
     pairs: list[ProblemCodePair] = []
+    # C rating 1300 vs 选手 2100 → P ≈ 99%
+    problem_ratings = {"A": 1200, "B": 1250, "C": 1300, "D": 2300}
 
-    result = generate_insights(overview, timeline, pairs)
+    result = generate_insights(overview, timeline, pairs, problem_ratings=problem_ratings)
 
-    trend = next((r for r in result if "放缓" in r), None)
-    assert trend is not None, f"Expected efficiency trend insight, got: {result}"
-    # 数值钉死：gaps = [7, 33] → 前半段均值 7min，后半段均值 33min
-    assert "33min" in trend, f"Expected second-half avg 33min, got: {trend}"
-    assert "7min" in trend, f"Expected first-half avg 7min, got: {trend}"
+    prob_line = next((r for r in result if "C" in r and "概率" in r), None)
+    assert prob_line is not None, f"Expected probability insight mentioning C, got: {result}"
+    assert "99%" in prob_line or "98%" in prob_line, f"Expected ~99% probability for C (2100 vs 1300), got: {prob_line}"
+    assert ("低于预期" in prob_line or "below" in prob_line.lower() or "未通过" in prob_line), (
+        f"Expected below-expectation, got: {prob_line}"
+    )
 
 
-def test_efficiency_trend_too_few_ac():
-    """只有 1 道 AC → 不生成效率趋势 insight"""
-    overview = _make_overview(problems_solved=1, total_problems=2)
+def test_solve_probability_skips_missing_rating():
+    """题目没有 rating 时跳过该题"""
+    overview = _make_overview(rank=10, problems_solved=3, total_problems=5)
+    overview = ContestOverview(
+        handle="tourist",
+        contest_name="CF Round #1",
+        rank=10,
+        old_rating=1850,
+        new_rating=1880,
+        rating_delta=30,
+        problems_solved=3,
+        total_problems=5,
+    )
+    # D 在 problem_ratings 中不存在 (无 rating)
     timeline = [
-        _make_entry(1, "A", "OK", 100500),
+        _make_entry(1, "D", "OK", 100800),
     ]
     pairs: list[ProblemCodePair] = []
+    problem_ratings: dict[str, int] = {}
 
-    result = generate_insights(overview, timeline, pairs)
+    result = generate_insights(overview, timeline, pairs, problem_ratings=problem_ratings)
 
-    has_trend = any("放缓" in r or "间隔" in r for r in result)
-    assert not has_trend, f"Should NOT produce efficiency trend with only 1 AC, got: {result}"
+    # D 无 rating → 不应产生概率 insight
+    prob_lines = [r for r in result if "概率" in r]
+    assert prob_lines == [], f"No rating → no probability insight, got: {prob_lines}"
+
+
+def test_solve_probability_only_when_interesting():
+    """close probability（40%~60%）不产生 insight —— 不值得提"""
+    overview = _make_overview(rank=10, problems_solved=2, total_problems=4)
+    overview = ContestOverview(
+        handle="tourist",
+        contest_name="CF Round #1",
+        rank=10,
+        old_rating=1400,
+        new_rating=1420,
+        rating_delta=20,
+        problems_solved=2,
+        total_problems=4,
+    )
+    timeline = [
+        _make_entry(1, "A", "WRONG_ANSWER", 100200),
+        _make_entry(2, "A", "OK", 100800),
+        _make_entry(3, "B", "OK", 101200),
+    ]
+    pairs = [
+        _make_pair("A", "Med Problem", [1], 2,
+                   wa_times=[100200], ac_time=100800),
+    ]
+    # P ≈ 50% (1400 vs 1400) — too close to call, not insightful
+    problem_ratings = {"A": 1400, "B": 1300}
+
+    result = generate_insights(overview, timeline, pairs, problem_ratings=problem_ratings)
+
+    prob_lines = [r for r in result if "概率" in r]
+    assert prob_lines == [], f"P≈50% is uninteresting, should skip, got: {prob_lines}"
 
 
 # ── tests: importance ordering ─────────────────────────────────────────────

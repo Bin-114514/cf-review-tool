@@ -405,15 +405,16 @@ def fetch_recent_contests(handle: str, count: int = 10) -> list[dict[str, Any]]:
 def generate_insights(overview, timeline, pairs, contest_start: int = 0) -> list[str]:
     """调六个规则函数，过滤 None，返回中文洞察列表"""
 ```
-六个规则（统一签名 `(overview, timeline, pairs, contest_start) -> str | None`，按重要性排序）：
+六个规则（签名 `(overview, timeline, pairs, contest_start) -> str | None`，按重要性排序）：
 - `_heaviest_penalty` — 罚时占比最大的 WA 题（CF 罚时 = AC 距开赛 + WA×10min）
 - `_speed_tier` — 前 30min 内 AC 题数
+- `_solve_probability_insight` — 题目 rating vs 选手 rating 的 Elo 概率洞察（替换 _efficiency_trend）
 - `_one_shot_ac_praise` — 一发 AC 表扬
 - `_wa_density` — WA ≥ 3 次的所有题目警告
 - `_unsolved_warning` — 有提交无 AC 警告
-- `_efficiency_trend` — 相邻 AC 间隔放缓检测（≥3 AC 才触发）
 
 **关键设计：** `contest_start=0` 时锚点退回首提交时间（向后兼容）；app.py 接线传 `calculate_contest_start(standings)` 获得准确罚时。
+**概率洞察：** 新增 `expected_solve_probability(contestant_rating, problem_rating) -> float` 利用 CF 官方 Elo 公式，只有差距足够大（P ≥ 55% 或 P ≤ 45%）时产生洞察，接近 50% 不值得提。
 
 **UI 集成（已完成）：** app.py 总览柱状图下方"💡 比赛洞察"区域，每条 `st.info()` 蓝色卡片，上限 6 条，空状态显示"本场比赛数据不足以生成洞察"。
 
@@ -459,6 +460,8 @@ def generate_insights(overview, timeline, pairs, contest_start: int = 0) -> list
 ### M2 Backlog
 
 - [x] M2-3: 弱点识别 — 多场比赛交叉分析（按 tags / rating bands）— 已完成
+- [x] M2-2: 概率洞察替换效率趋势 — `expected_solve_probability` + `_solve_probability_insight`（P ≤ 45% AC / P ≥ 55% 未 AC 才报），删 `_efficiency_trend`
+- [ ] M2-2 补强：将概率洞察升级为"题目 rating vs 耗时分位"判断——需要同场排名前 N 人的解题时间中位数做参照（或等 M2-3 多场交叉数据就绪后回补）
 - [ ] M2-4: AtCoder 支持（推迟到 M3）
 - [ ] M2-5: 分享链接功能（推迟到 M3）
 - [x] app.py 接线 generate_insights（"洞察"区域，传入 contest_start）— 已完成
@@ -468,7 +471,6 @@ def generate_insights(overview, timeline, pairs, contest_start: int = 0) -> list
 - [ ] build_problem_timeline(submissions, problems) — 按题目分组的时间线（M1 遗留）
 - [ ] 洞察上限 [:6] 移入 analyzer（generate_insights 加 limit 参数）— 第 7 条规则出现时处理
 - [ ] extract_wa_ac_pairs 计入 AC 后的 WA，与 _heaviest_penalty 的 pre-AC 过滤口径不一致
-- [ ] _efficiency_trend 分钟取整后再平均，边界处可能误报
 - [ ] 弱点 Tab 惰性加载：st.tabs 每次 rerun 都执行两个 Tab 体，每次 Start Review 多付 ~5 次分页 API 调用（需先把 go 按钮迁到 session_state 才能安全改）
 - [ ] cf_api_get 对 status=FAILED（如 handle 不存在）也重试 4 次 — 非瞬时错误不应重试（改动影响既有测试，需确认）
 - [ ] I6: 多用户并发时无进程级 CF API 节流（cf_api_get 加 threading.Lock + 时间戳门；Streamlit Cloud 单 IP，CF 建议 ≤1 req/2s）
