@@ -96,13 +96,13 @@ uv run streamlit run app.py
 ## 当前状态（2026-07-17）
 
 - [x] uv 项目初始化，依赖已同步
-- [x] app.py 已完成（侧边栏 + 三 Tab + dark theme）
 - [x] CLAUDE.md 就绪
-- [ ] pytest 配置待添加
-- [ ] tests/ 待创建
-- [x] fetcher.py 已完成（CFAPIError + 4 函数 + 18 tests）
-- [x] analyzer.py 已完成（Submission + TimelineEntry + ProblemCodePair + build_timeline + extract_wa_ac_pairs + 10 tests）
-- [ ] 功能实现待开始
+- [x] pytest 配置已添加（pyproject.toml [tool.pytest.ini_options]）
+- [x] tests/ 已创建（34 tests: 18 fetcher + 16 analyzer）
+- [x] fetcher.py 已完成（CFAPIError + 6 函数 + 18 tests）
+- [x] analyzer.py 已完成（5 dataclasses + 5 函数 + 16 tests）
+- [x] app.py 已完成 — 侧边栏输入校验 + 总览卡片 + plotly 柱状图 + 逐题时间线（AC 绿/WA 黄/失败红）+ WA→AC 对比面板
+- [x] M1-3 完整 UI 已完成（code review + security review 修复已应用）
 
 ## M1: 单场比赛复盘 MVP
 
