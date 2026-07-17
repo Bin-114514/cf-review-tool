@@ -116,3 +116,36 @@ def fetch_recent_contests(handle: str, count: int = 10) -> list[dict[str, Any]]:
         }
         for entry in recent
     ]
+
+
+_PAGE_SIZE = 100  # user.status 每页拉取条数
+
+
+def fetch_recent_submissions(handle: str, count: int = 500) -> list[dict[str, Any]]:
+    """分页拉取用户最近的提交记录（M2-3 弱点分析数据源）
+
+    按需分页：from=1 → from=101 → ... 直到某页返回不足 _PAGE_SIZE 条
+    （数据到底）或累计达到 count。每页请求间隔 ≥ 1 秒。
+    """
+    collected: list[dict[str, Any]] = []
+    from_index = 1
+    while len(collected) < count:
+        time.sleep(1)
+        response = cf_api_get(
+            "user.status",
+            {"handle": handle, "from": str(from_index), "count": str(_PAGE_SIZE)},
+        )
+        page = response.get("result", [])
+        collected.extend(page)
+        if len(page) < _PAGE_SIZE:
+            break  # 数据到底
+        from_index += _PAGE_SIZE
+    return collected[:count]
+
+
+def fetch_problem_tags(contest_id: int) -> dict[str, list[str]]:
+    """获取某场比赛的题目 tags 映射 {index: [tags]}（M2-3 弱点分析数据源）"""
+    time.sleep(1)
+    response = cf_api_get("contest.standings", {"contestId": str(contest_id)})
+    problems = response.get("result", {}).get("problems", [])
+    return {p.get("index", "?"): p.get("tags", []) for p in problems}
