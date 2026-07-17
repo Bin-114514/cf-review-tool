@@ -66,14 +66,14 @@ def submissions_response() -> dict:
             {
                 "id": 1001, "contestId": 1, "creationTimeSeconds": 1263849780, "relativeTimeSeconds": 180,
                 "problem": {"contestId": 1, "index": "A", "name": "Theatre Square", "rating": 1000, "tags": ["math"]},
-                "author": {"contestId": 1, "members": [{"handle": "tourist"}]},
+                "author": {"contestId": 1, "members": [{"handle": "tourist"}], "participantType": "CONTESTANT"},
                 "programmingLanguage": "C++17 (GCC 7-32)", "verdict": "OK",
                 "testset": "TESTS", "passedTestCount": 10, "timeConsumedMillis": 15, "memoryConsumedBytes": 262144,
             },
             {
                 "id": 1002, "contestId": 1, "creationTimeSeconds": 1263849960, "relativeTimeSeconds": 360,
                 "problem": {"contestId": 1, "index": "B", "name": "Spreadsheet", "rating": 1600, "tags": ["implementation"]},
-                "author": {"contestId": 1, "members": [{"handle": "tourist"}]},
+                "author": {"contestId": 1, "members": [{"handle": "tourist"}], "participantType": "CONTESTANT"},
                 "programmingLanguage": "C++17 (GCC 7-32)", "verdict": "WRONG_ANSWER",
                 "testset": "TESTS", "passedTestCount": 5, "timeConsumedMillis": 30, "memoryConsumedBytes": 524288,
             },
@@ -90,14 +90,14 @@ def submissions_multi_contest() -> dict:
             {
                 "id": 1001, "contestId": 1, "creationTimeSeconds": 1263849780, "relativeTimeSeconds": 180,
                 "problem": {"contestId": 1, "index": "A", "name": "Theatre Square", "rating": 1000, "tags": ["math"]},
-                "author": {"contestId": 1, "members": [{"handle": "tourist"}]},
+                "author": {"contestId": 1, "members": [{"handle": "tourist"}], "participantType": "CONTESTANT"},
                 "programmingLanguage": "C++17 (GCC 7-32)", "verdict": "OK",
                 "testset": "TESTS", "passedTestCount": 10, "timeConsumedMillis": 15, "memoryConsumedBytes": 262144,
             },
             {
                 "id": 2001, "contestId": 2, "creationTimeSeconds": 1264000000, "relativeTimeSeconds": 600,
                 "problem": {"contestId": 2, "index": "A", "name": "Another Problem", "rating": 1200, "tags": ["dp"]},
-                "author": {"contestId": 2, "members": [{"handle": "tourist"}]},
+                "author": {"contestId": 2, "members": [{"handle": "tourist"}], "participantType": "CONTESTANT"},
                 "programmingLanguage": "Python 3", "verdict": "OK",
                 "testset": "TESTS", "passedTestCount": 8, "timeConsumedMillis": 50, "memoryConsumedBytes": 131072,
             },
@@ -245,7 +245,7 @@ def test_fetch_user_submissions_empty_for_missing_contest(mocker):
         "result": [{
             "id": 3001, "contestId": 999, "creationTimeSeconds": 1264000000, "relativeTimeSeconds": 600,
             "problem": {"contestId": 999, "index": "C", "name": "Some Problem", "rating": 2000, "tags": ["math"]},
-            "author": {"contestId": 999, "members": [{"handle": "tourist"}]},
+            "author": {"contestId": 999, "members": [{"handle": "tourist"}], "participantType": "CONTESTANT"},
             "programmingLanguage": "C++17", "verdict": "OK",
             "testset": "TESTS", "passedTestCount": 20, "timeConsumedMillis": 25, "memoryConsumedBytes": 65536,
         }],
@@ -263,6 +263,45 @@ def test_fetch_user_submissions_handles_api_error(mocker):
 
     with pytest.raises(CFAPIError, match="CF API returned FAILED"):
         fetch_user_submissions(handle="tourist", contest_id=1)
+
+
+def test_fetch_user_submissions_excludes_practice(mocker):
+    """I4: 赛后补题（PRACTICE/VIRTUAL）提交不计入，只保留 CONTESTANT"""
+    response = {
+        "status": "OK",
+        "result": [
+            {
+                "id": 1001, "contestId": 1, "creationTimeSeconds": 1263849780,
+                "problem": {"contestId": 1, "index": "A", "name": "Theatre Square"},
+                "author": {"contestId": 1, "members": [{"handle": "tourist"}], "participantType": "CONTESTANT"},
+                "programmingLanguage": "C++17", "verdict": "OK",
+                "timeConsumedMillis": 15, "memoryConsumedBytes": 262144,
+            },
+            {
+                # 赛后补题：同 contestId 但 participantType=PRACTICE，必须排除
+                "id": 1002, "contestId": 1, "creationTimeSeconds": 1263936180,
+                "problem": {"contestId": 1, "index": "B", "name": "Spreadsheet"},
+                "author": {"contestId": 1, "members": [{"handle": "tourist"}], "participantType": "PRACTICE"},
+                "programmingLanguage": "C++17", "verdict": "OK",
+                "timeConsumedMillis": 30, "memoryConsumedBytes": 524288,
+            },
+            {
+                # 虚拟参赛：也排除
+                "id": 1003, "contestId": 1, "creationTimeSeconds": 1264000000,
+                "problem": {"contestId": 1, "index": "C", "name": "Some Problem"},
+                "author": {"contestId": 1, "members": [{"handle": "tourist"}], "participantType": "VIRTUAL"},
+                "programmingLanguage": "C++17", "verdict": "WRONG_ANSWER",
+                "timeConsumedMillis": 40, "memoryConsumedBytes": 131072,
+            },
+        ],
+    }
+    mocker.patch("fetcher.cf_api_get", return_value=response)
+
+    result = fetch_user_submissions(handle="tourist", contest_id=1)
+
+    assert len(result) == 1
+    assert result[0]["id"] == 1001
+    assert result[0]["author"]["participantType"] == "CONTESTANT"
 
 
 # ── tests: fetch_rating_changes ───────────────────────────────────────────────

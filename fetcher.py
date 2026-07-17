@@ -65,14 +65,22 @@ def fetch_contest_standings(contest_id: int, handle: str) -> dict[str, Any]:
 
 
 def fetch_user_submissions(handle: str, contest_id: int) -> list[dict[str, Any]]:
-    """获取用户在某场比赛的所有提交记录"""
+    """获取用户在某场比赛的正式参赛提交记录
+
+    只保留 participantType == CONTESTANT 的提交——
+    赛后补题（PRACTICE）和虚拟参赛（VIRTUAL）共享 contestId，会污染复盘数据。
+    """
     time.sleep(1)
     response = cf_api_get(
         "user.status",
         {"handle": handle, "from": "1", "count": "100"},
     )
     submissions = response.get("result", [])
-    return [s for s in submissions if s.get("contestId") == contest_id]
+    return [
+        s for s in submissions
+        if s.get("contestId") == contest_id
+        and s.get("author", {}).get("participantType") == "CONTESTANT"
+    ]
 
 
 def fetch_rating_changes(contest_id: int, handle: str) -> dict[str, Any] | None:
