@@ -349,6 +349,41 @@ Task 4 (部署配置)
 - [x] `calculate_contest_start(standings) -> int` — 已实现（M1-3）
 - [ ] `build_problem_timeline(submissions, problems) -> list[ProblemTimelineEntry]` — 按题目分组的时间线
 
+---
+
+## M2: 增强功能
+
+### 总体目标
+
+在 M1 单场比赛复盘基础上，增加便捷选择、智能解读、和多场交叉分析。
+
+### M2-1: 最近 N 场比赛选择器 ✅
+
+**状态：** 已完成
+
+**新增函数：**
+```python
+def fetch_recent_contests(handle: str, count: int = 10) -> list[dict[str, Any]]:
+    """调用 CF user.rating，返回最近 N 场 rated 比赛（按时间降序）"""
+```
+每条记录：`contestId`, `contestName`, `rank`, `ratingChange` (new-old), `date` (Unix timestamp)。
+
+**UI 变更（app.py sidebar）：**
+- handle 合法时自动拉取最近 10 场 rated 比赛，以 selectbox 展示
+- 格式：`2026-07-16 · ContestName · #Rank`
+- 选中后自动填充 contest_id 输入框
+- 手动输入 contest_id 保留作为 fallback
+- 使用 `@st.cache_data(ttl=300)` 缓存结果，避免每次 re-render 调用 API
+
+**测试：** 6 个新测试（tests/test_fetcher.py）
+
+### M2 Backlog
+
+- [ ] M2-2: 启发式复盘摘要 — `analyzer.py` 纯函数生成 4-6 条中文洞察
+- [ ] M2-3: 弱点识别 — 多场比赛交叉分析（按 tags / rating bands）
+- [ ] M2-4: AtCoder 支持
+- [ ] M2-5: 分享链接功能
+
 ### 全局约束（适用于所有 Task）
 
 1. 每 ~100 行代码运行一次验证，确认无报错再继续
