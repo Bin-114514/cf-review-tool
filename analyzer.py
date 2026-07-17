@@ -121,7 +121,6 @@ def extract_overview(
 
 def build_timeline(
     submissions: list[Submission],
-    problems: list[dict[str, Any]],
 ) -> list[TimelineEntry]:
     """将提交按时间排序，构建时间线条目列表（纯函数）"""
     sorted_subs = sorted(submissions, key=lambda s: s.creation_time)

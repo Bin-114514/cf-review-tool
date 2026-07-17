@@ -1,15 +1,40 @@
 # CF Review Tool - 赛后复盘工具
 """
-Streamlit 最小骨架 — 侧边栏输入 + spinner → 总览卡片 + 题目尝试柱状图。
+Streamlit UI — 侧边栏输入 + spinner → 总览卡片 + 题目尝试柱状图 + 逐题时间线 + WA vs AC。
 只做 UI 组装，业务逻辑全部在 fetcher/analyzer 中。
 """
+
+import re
+from datetime import datetime
 
 import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-from analyzer import build_submissions_from_status, extract_overview
+from analyzer import (
+    build_submissions_from_status,
+    build_timeline,
+    calculate_contest_start,
+    extract_overview,
+    extract_wa_ac_pairs,
+)
 from fetcher import CFAPIError, fetch_contest_standings, fetch_rating_changes, fetch_user_submissions
+
+# CF handle 规则: 3–24 字符，字母/数字/下划线/连字符
+_HANDLE_RE = re.compile(r"^[a-zA-Z0-9._-]{3,24}$")
+# 与 st.spinner 共用文案，避免硬编码
+_ERROR_GENERIC = "Failed to load contest data. Check your inputs or try again later."
+
+
+def _color_rows(row):
+    """行背景色：AC 绿色，WA 黄色，其他失败（TLE/RE/CE 等）浅红色"""
+    verdict = row["Verdict"]
+    if verdict == "OK":
+        return ["background-color: rgba(40, 167, 69, 0.25)"] * len(row)
+    if verdict == "WRONG_ANSWER":
+        return ["background-color: rgba(212, 160, 23, 0.25)"] * len(row)
+    # 非 AC 也非 WA（TLE / RE / CE / MLE / 等）
+    return ["background-color: rgba(220, 53, 69, 0.18)"] * len(row)
 
 
 def main():
@@ -21,7 +46,15 @@ def main():
         st.header("Input")
         handle = st.text_input("Handle", value="tourist")
         contest_id = st.number_input("Contest ID", min_value=1, step=1, value=2245)
-        go = st.button("Start Review", type="primary", use_container_width=True)
+        handle_ok = bool(_HANDLE_RE.match(handle))
+        if handle and not handle_ok:
+            st.caption("⚠️ Handle must be 3–24 chars: letters, digits, `.`, `-`, `_`.")
+        go = st.button(
+            "Start Review",
+            type="primary",
+            use_container_width=True,
+            disabled=not handle_ok,
+        )
 
     # ── 冷态 ──
     if not go:
@@ -34,13 +67,19 @@ def main():
             standings = fetch_contest_standings(int(contest_id), handle)
             rating_change = fetch_rating_changes(int(contest_id), handle)
             raw_subs = fetch_user_submissions(handle, int(contest_id))
-        except CFAPIError as e:
-            st.error(str(e))
+        except CFAPIError:
+            st.error(_ERROR_GENERIC)
+            return
+        except Exception:
+            st.error(_ERROR_GENERIC)
+            st.exception("Internal error — see details below")
             return
 
     # ── 数据分析 ──
     overview = extract_overview(standings, rating_change, handle)
     submissions = build_submissions_from_status(raw_subs, int(contest_id))
+    contest_start = calculate_contest_start(standings)
+    timeline = build_timeline(submissions)
 
     # ── 比赛总览卡片 ──
     st.header(f"🏆 {overview.contest_name}")
@@ -83,6 +122,65 @@ def main():
             paper_bgcolor="rgba(0,0,0,0)",
         )
         st.plotly_chart(fig, use_container_width=True)
+
+    # ── 逐题时间线 ──
+    with st.expander("⏱ 逐题时间线", expanded=False):
+        if timeline:
+            rows: list[dict[str, object]] = []
+            for entry in timeline:
+                ts = datetime.utcfromtimestamp(entry.creation_time).strftime("%H:%M:%S")
+                if contest_start:
+                    mins = (entry.creation_time - contest_start) // 60
+                else:
+                    mins = 0
+                rows.append({
+                    "Problem": f"{entry.problem_index}. {entry.problem_name}",
+                    "Time (UTC)": ts,
+                    "Verdict": entry.verdict,
+                    "Min from Start": f"+{mins}min",
+                })
+
+            tdf = pd.DataFrame(rows)
+            styled = tdf.style.apply(_color_rows, axis=1)
+            st.dataframe(styled, use_container_width=True, hide_index=True)
+        else:
+            st.caption("No submissions found.")
+
+    # ── WA vs AC ──
+    with st.expander("🔍 WA → AC 对比", expanded=False):
+        pairs = extract_wa_ac_pairs(timeline)
+
+        if pairs:
+            for pair in pairs:
+                st.subheader(
+                    f"Problem {pair.problem_index} — "
+                    f"{pair.problem_name} / {pair.failed_attempts} attempt{'s' if pair.failed_attempts > 1 else ''}"
+                )
+                left, right = st.columns(2)
+                with left:
+                    wa_blocks: list[str] = []
+                    for i, wa in enumerate(pair.wa_submissions, 1):
+                        wa_blocks.append(
+                            f"WA #{i}\n"
+                            f"Submission ID: {wa.id}\n"
+                            f"Language: {wa.language}\n"
+                            f"Time: {wa.time_millis}ms\n"
+                            f"Memory: {wa.memory_bytes // 1024}KB"
+                        )
+                    st.code("\n\n".join(wa_blocks), language=None)
+                with right:
+                    ac = pair.ac_submission
+                    if ac:
+                        ac_text = (
+                            f"AC ✓\n"
+                            f"Submission ID: {ac.id}\n"
+                            f"Language: {ac.language}\n"
+                            f"Time: {ac.time_millis}ms\n"
+                            f"Memory: {ac.memory_bytes // 1024}KB"
+                        )
+                        st.code(ac_text, language=None)
+        else:
+            st.info("No WA→AC pairs — all problems either solved first-try or unsolved.")
 
 
 if __name__ == "__main__":

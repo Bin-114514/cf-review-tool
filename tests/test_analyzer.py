@@ -48,7 +48,7 @@ def test_build_timeline():
     ]
     problems = [{"index": "A", "name": "Problem A"}]
 
-    timeline = build_timeline(submissions, problems)
+    timeline = build_timeline(submissions)
 
     assert len(timeline) == 3
     assert timeline[0].creation_time == 100
@@ -58,7 +58,7 @@ def test_build_timeline():
 
 def test_empty_submissions():
     """空列表 → 不抛异常，返回空列表"""
-    result = build_timeline([], [])
+    result = build_timeline([])
     assert result == []
 
 
@@ -67,7 +67,7 @@ def test_ac_only():
     submissions = [make_submission(1, "B", "OK", 500)]
     problems = [{"index": "B", "name": "Problem B"}]
 
-    timeline = build_timeline(submissions, problems)
+    timeline = build_timeline(submissions)
 
     assert len(timeline) == 1
     entry = timeline[0]
@@ -86,7 +86,7 @@ def test_mixed_verdicts():
     ]
     problems = [{"index": "A", "name": "Problem A"}]
 
-    timeline = build_timeline(submissions, problems)
+    timeline = build_timeline(submissions)
 
     assert len(timeline) == 4
     assert timeline[0].creation_time == 50
@@ -107,7 +107,7 @@ def test_get_wa_ac_diff():
     ]
     problems = [{"index": "A", "name": "Problem A"}]
 
-    timeline = build_timeline(submissions, problems)
+    timeline = build_timeline(submissions)
     pairs = extract_wa_ac_pairs(timeline)
 
     assert len(pairs) == 1
@@ -129,7 +129,7 @@ def test_wa_only_not_in_pairs():
     ]
     problems = [{"index": "A", "name": "Problem A"}]
 
-    timeline = build_timeline(submissions, problems)
+    timeline = build_timeline(submissions)
     pairs = extract_wa_ac_pairs(timeline)
 
     assert pairs == []
@@ -140,7 +140,7 @@ def test_first_try_ac_not_in_pairs():
     submissions = [make_submission(1, "B", "OK", 100)]
     problems = [{"index": "B", "name": "Problem B"}]
 
-    timeline = build_timeline(submissions, problems)
+    timeline = build_timeline(submissions)
     pairs = extract_wa_ac_pairs(timeline)
 
     assert pairs == []
@@ -156,7 +156,7 @@ def test_tle_not_treated_as_wa():
     ]
     problems = [{"index": "A", "name": "Problem A"}]
 
-    timeline = build_timeline(submissions, problems)
+    timeline = build_timeline(submissions)
     pairs = extract_wa_ac_pairs(timeline)
 
     # TLE+CE+RE 都不是 WA，所以没有 wa_ac_pair
@@ -177,7 +177,7 @@ def test_multi_problem():
         {"index": "C", "name": "Problem C"},
     ]
 
-    timeline = build_timeline(submissions, problems)
+    timeline = build_timeline(submissions)
     pairs = extract_wa_ac_pairs(timeline)
 
     assert len(pairs) == 1
