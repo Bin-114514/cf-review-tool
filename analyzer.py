@@ -306,8 +306,27 @@ def expected_solve_probability(contestant_rating: int, problem_rating: int) -> f
     return 1.0 / (1.0 + 10.0 ** ((problem_rating - contestant_rating) / 400.0))
 
 
-_PROB_HIGH = 0.60   # P ≥ 60% 时选手明显占优（约 70 分差距），没 AC 才值得提
-_PROB_LOW = 0.40    # P ≤ 40% 时题目明显偏难（约 70 分差距），AC 了才值得提
+def per_problem_probability(
+    overview: ContestOverview,
+    problem_ratings: dict[str, int],
+) -> dict[str, float]:
+    """计算每道有 rating 题目的预期通过概率（纯函数）
+
+    使用 CF Elo 公式 P = 1/(1 + 10^((D - R)/400))。
+    只返回 problem_ratings 中有 rating 的题目（gym 题无 rating 自动跳过）。
+    赛前 rating=0 时（unrated 选手首场）返回 {}。
+    """
+    R = overview.old_rating
+    if R <= 0:
+        return {}
+    return {
+        idx: expected_solve_probability(R, rating)
+        for idx, rating in problem_ratings.items()
+    }
+
+
+_PROB_HIGH = 0.60   # P ≥ 60% 时选手明显占优（约 70 分差距）
+_PROB_LOW = 0.40    # P ≤ 40% 时题目明显偏难（约 70 分差距）
 
 
 def _solve_probability_insight(
@@ -317,42 +336,43 @@ def _solve_probability_insight(
     contest_start: int = 0,
     problem_ratings: dict[str, int] | None = None,
 ) -> str | None:
-    """对 AC / 未 AC 题目，使用 CF Elo 公式判断是否超出/低于预期（纯函数）
+    """找出"实际 vs 预期"偏差最大的题目（纯函数）
 
-    只有差距足够大（P ≥ 75% 或 P ≤ 35%）时才产生洞察。
-    接近 50% 的概率不值得提——"你可以解，也可能解不出"不是信息。
+    对每道题计算 |AC_signal - P|:
+    - AC 了的题信号 = 1，低 P → 偏差大（超出预期）
+    - 未 AC 的信号 = 0，高 P → 偏差大（低于预期）
+    只输出偏差最大的那一条（如有多个偏差相近，概率更极端的优先）。
     """
     if not problem_ratings:
         return None
     R = overview.old_rating
     if R <= 0:
-        return None  # 无赛前 rating（unrated 选手首场）→ 无法计算
-    above: list[tuple[str, float]] = []   # 解决的概率低但 AC 了
-    below: list[tuple[str, float]] = []   # 概率高但没 AC
+        return None
+    candidates: list[tuple[str, float, bool, float]] = []  # (idx, P, solved, deviation)
     for idx, entries in _group_by_problem(timeline).items():
         D = problem_ratings.get(idx)
-        if D is None:
+        if D is None or not entries:
             continue
         P = expected_solve_probability(R, D)
-        ac = any(e.verdict == "OK" for e in entries)
-        has_attempt = len(entries) > 0
-        if ac and P <= _PROB_LOW:
-            above.append((idx, P))
-        elif not ac and has_attempt and P >= _PROB_HIGH:
-            below.append((idx, P))
-
-    lines: list[str] = []
-    for idx, P in above:
-        lines.append(
-            f"📊 {idx} 题 (rating {problem_ratings[idx]}) 预期解题概率 {P:.0%}，"
+        solved = any(e.verdict == "OK" for e in entries)
+        deviation = (1.0 - P) if solved else P
+        if solved and P <= _PROB_LOW:
+            candidates.append((idx, P, True, deviation))
+        elif not solved and P >= _PROB_HIGH:
+            candidates.append((idx, P, False, deviation))
+    if not candidates:
+        return None
+    idx, P, solved, _ = max(candidates, key=lambda x: x[3])
+    if solved:
+        return (
+            f"📊 {idx} 题 (rating {problem_ratings[idx]}) 预期通过率 {P:.0%}，"
             f"你解出来了——超出预期"
         )
-    for idx, P in below:
-        lines.append(
-            f"📊 {idx} 题 (rating {problem_ratings[idx]}) 预期解题概率 {P:.0%}，"
+    else:
+        return (
+            f"📊 {idx} 题 (rating {problem_ratings[idx]}) 预期通过率 {P:.0%}，"
             f"有提交但未通过——低于预期，建议重点复盘"
         )
-    return "\n\n".join(lines) if lines else None
 
 
 def generate_insights(

@@ -25,6 +25,7 @@ from analyzer import (
     extract_overview,
     extract_wa_ac_pairs,
     generate_insights,
+    per_problem_probability,
 )
 from fetcher import (
     CFAPIError,
@@ -82,6 +83,7 @@ def _render_single_contest(
     insights: list[str],
     contest_start: int,
     contest_id: int,
+    problem_ratings: dict[str, int] | None = None,
 ) -> None:
     """Tab 1：单场复盘 — 总览卡片 + 柱状图 + 洞察 + 时间线 + WA 对比"""
     # ── 比赛总览卡片 ──
@@ -125,6 +127,29 @@ def _render_single_contest(
             paper_bgcolor="rgba(0,0,0,0)",
         )
         st.plotly_chart(fig, use_container_width=True)
+
+    # ── 逐题概率展示（problem rating vs 选手 rating）──
+    if problem_ratings and overview.old_rating > 0:
+        probs = per_problem_probability(overview, problem_ratings)
+        if probs:
+            prob_parts: list[str] = []
+            # timeline 中的序号顺序
+            seen: set[str] = set()
+            for entry in timeline:
+                idx = entry.problem_index
+                if idx in seen or idx not in probs:
+                    continue
+                seen.add(idx)
+                P = probs[idx]
+                ac = entry.verdict == "OK"
+                if ac:
+                    label = f"{idx} ✅ Solved (expected {P:.0%})"
+                else:
+                    label = f"{idx} ❌ Not solved (expected {P:.0%})"
+                color = "green" if P >= 0.6 else "red" if P <= 0.4 else "gray"
+                prob_parts.append(f":{color}[{label}]")
+            if prob_parts:
+                st.caption("  ·  ".join(prob_parts))
 
     # ── 比赛洞察（M2-2 启发式规则引擎）──
     st.subheader("💡 比赛洞察")
@@ -374,7 +399,7 @@ def main() -> None:
     # ── 双 Tab 布局 ──
     tab_review, tab_weakness = st.tabs(["📊 单场复盘", "🎯 弱点分析"])
     with tab_review:
-        _render_single_contest(overview, submissions, timeline, pairs, insights, contest_start, int(contest_id))
+        _render_single_contest(overview, submissions, timeline, pairs, insights, contest_start, int(contest_id), problem_ratings)
     with tab_weakness:
         _render_weakness(handle)
 

@@ -13,6 +13,7 @@ from analyzer import (
     expected_solve_probability,
     extract_wa_ac_pairs,
     generate_insights,
+    per_problem_probability,
 )
 
 # ── fixtures ────────────────────────────────────────────────────────────────
@@ -286,10 +287,9 @@ def test_solve_probability_above_expectation():
 
     result = generate_insights(overview, timeline, pairs, problem_ratings=problem_ratings)
 
-    prob_line = next((r for r in result if "概率" in r), None)
-    assert prob_line is not None, f"Expected probability insight for D, got: {result}"
+    prob_line = next((r for r in result if "超出预期" in r), None)
+    assert prob_line is not None, f"Expected above-expectation insight for D, got: {result}"
     assert "3%" in prob_line or "4%" in prob_line, f"Expected ~3% probability (1500 vs 2100), got: {prob_line}"
-    assert ("超出预期" in prob_line or "above" in prob_line.lower()), f"Expected above-expectation, got: {prob_line}"
 
 
 def test_solve_probability_below_expectation():
@@ -317,12 +317,10 @@ def test_solve_probability_below_expectation():
 
     result = generate_insights(overview, timeline, pairs, problem_ratings=problem_ratings)
 
-    prob_line = next((r for r in result if "C" in r and "概率" in r), None)
-    assert prob_line is not None, f"Expected probability insight mentioning C, got: {result}"
+    prob_line = next((r for r in result if "低于预期" in r), None)
+    assert prob_line is not None, f"Expected below-expectation insight, got: {result}"
+    assert "C" in prob_line, f"Expected C mentioned, got: {prob_line}"
     assert "99%" in prob_line or "98%" in prob_line, f"Expected ~99% probability for C (2100 vs 1300), got: {prob_line}"
-    assert ("低于预期" in prob_line or "below" in prob_line.lower() or "未通过" in prob_line), (
-        f"Expected below-expectation, got: {prob_line}"
-    )
 
 
 def test_solve_probability_skips_missing_rating():
@@ -348,7 +346,7 @@ def test_solve_probability_skips_missing_rating():
     result = generate_insights(overview, timeline, pairs, problem_ratings=problem_ratings)
 
     # D 无 rating → 不应产生概率 insight
-    prob_lines = [r for r in result if "概率" in r]
+    prob_lines = [r for r in result if "预期通过率" in r]
     assert prob_lines == [], f"No rating → no probability insight, got: {prob_lines}"
 
 
@@ -379,7 +377,7 @@ def test_solve_probability_only_when_interesting():
 
     result = generate_insights(overview, timeline, pairs, problem_ratings=problem_ratings)
 
-    prob_lines = [r for r in result if "概率" in r]
+    prob_lines = [r for r in result if "预期通过率" in r]
     assert prob_lines == [], f"P≈50% is uninteresting, should skip, got: {prob_lines}"
 
 
@@ -413,6 +411,92 @@ def test_insights_importance_order():
     assert idx_penalty < idx_speed < idx_oneshot, (
         f"Wrong order: penalty@{idx_penalty}, speed@{idx_speed}, oneshot@{idx_oneshot}: {result}"
     )
+
+
+# ── tests: per_problem_probability ─────────────────────────────────────────
+
+
+def test_per_problem_probability_all_rated():
+    """3 道有 rating 的题，用户 rating 1850，断言每道概率"""
+    overview = ContestOverview(
+        handle="tourist",
+        contest_name="CF Round #1",
+        rank=10,
+        old_rating=1850,
+        new_rating=1880,
+        rating_delta=30,
+        problems_solved=3,
+        total_problems=4,
+    )
+    problem_ratings: dict[str, int] = {"A": 1200, "B": 1600, "C": 2000}
+    # 人工验算：
+    # A: 1/(1+10^((1200-1850)/400)) = 1/(1+10^(-650/400)) = 1/(1+10^-1.625) ≈ 1/(1+0.0237) ≈ 0.977
+    # B: 1/(1+10^((1600-1850)/400)) = 1/(1+10^-0.625) ≈ 1/(1+0.237) ≈ 0.808
+    # C: 1/(1+10^((2000-1850)/400)) = 1/(1+10^0.375) ≈ 1/(1+2.37) ≈ 0.297
+    result = per_problem_probability(overview, problem_ratings)
+    assert isinstance(result, dict), f"Expected dict, got {type(result)}"
+    assert abs(result["A"] - 0.977) < 0.01, f"A prob expected ~0.977, got {result['A']}"
+    assert abs(result["B"] - 0.808) < 0.01, f"B prob expected ~0.808, got {result['B']}"
+    assert abs(result["C"] - 0.297) < 0.01, f"C prob expected ~0.297, got {result['C']}"
+
+
+def test_per_problem_probability_empty():
+    """空 problem_ratings 返回 {}"""
+    overview = _make_overview()
+    result = per_problem_probability(overview, {})
+    assert result == {}
+
+
+def test_per_problem_probability_boundary():
+    """problem_rating == user_rating 时 P ≈ 0.5"""
+    overview = ContestOverview(
+        handle="test",
+        contest_name="CF Round",
+        rank=50,
+        old_rating=1500,
+        new_rating=1520,
+        rating_delta=20,
+        problems_solved=1,
+        total_problems=2,
+    )
+    problem_ratings = {"A": 1500, "B": 1400}
+    result = per_problem_probability(overview, problem_ratings)
+    assert abs(result["A"] - 0.5) < 0.01, f"Equal rating should give 0.5, got {result['A']}"
+    assert abs(result["B"] - 0.640) < 0.01, f"1400 vs 1500 should be ~0.64, got {result['B']}"
+
+
+def test_per_problem_probability_skip_unrated():
+    """部分题有 rating 部分没有 → 只返回有 rating 的"""
+    overview = ContestOverview(
+        handle="test",
+        contest_name="CF Round",
+        rank=50,
+        old_rating=1500,
+        new_rating=1520,
+        rating_delta=20,
+        problems_solved=2,
+        total_problems=3,
+    )
+    problem_ratings: dict[str, int] = {"A": 1400, "C": 1700}  # B 无 rating
+    result = per_problem_probability(overview, problem_ratings)
+    assert set(result.keys()) == {"A", "C"}, f"Should skip B (no rating), got keys: {result.keys()}"
+
+
+def test_per_problem_probability_unrated_user():
+    """赛前 rating=0（unrated 选手首场）→ 返回 {}"""
+    overview = ContestOverview(
+        handle="newbie",
+        contest_name="CF Round",
+        rank=100,
+        old_rating=0,
+        new_rating=1200,
+        rating_delta=1200,
+        problems_solved=1,
+        total_problems=2,
+    )
+    problem_ratings = {"A": 1200}
+    result = per_problem_probability(overview, problem_ratings)
+    assert result == {}, f"Unrated user should get empty, got {result}"
 
 
 # ── tests: type hints (compile-time verification) ──────────────────────────
